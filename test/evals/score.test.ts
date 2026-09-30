@@ -31,6 +31,15 @@ describe('scoreAnswer', () => {
     }
   });
 
+  it('fails answers that leak reasoning or review talk', () => {
+    const s = scoreAnswer(q, 'Let me review my draft. 280 hits, hellfire.');
+    expect(s).toMatchObject({ recall: 1, pass: false });
+    expect(s.forbidden.length).toBeGreaterThan(0);
+    expect(
+      scoreAnswer(q, 'The Balrog has 280 hits and casts hellfire; check the rules.').pass,
+    ).toBe(true);
+  });
+
   it('fails on forbidden claims even with full recall', () => {
     const s = scoreAnswer(q, '280, hellfire, and you Must Enter The Lair.');
     expect(s).toMatchObject({ recall: 1, forbidden: ['must enter the lair'], pass: false });

@@ -316,9 +316,26 @@ describe('runaway generations and round budget', () => {
     expect(r.llmCalls[0]!.truncated).toBe(true);
   });
 
-  it('keeps a cut-off reply that has content', async () => {
-    const { promise } = run([{ content: 'Partial but useful', truncated: true }]);
-    expect((await promise).text).toBe('Partial but useful');
+  it('asks again when an answer is cut off mid-way, and accepts the second reply', async () => {
+    const { llm, promise } = run([
+      { content: 'The army needs 12 men because 280 / (1', truncated: true },
+      { content: 'Still cut', truncated: true },
+    ]);
+    expect((await promise).text).toBe('Still cut');
+    expect(llm.requests[1]!.messages.at(-1)).toMatchObject({
+      content: expect.stringMatching(/cut off/),
+    });
+  });
+
+  it('keeps the draft when the review is cut off', async () => {
+    const { promise } = run(
+      [
+        reply('Clean draft.'),
+        { content: 'Let me review my draft. I was in the middle of', truncated: true },
+      ],
+      { reviewStep: true },
+    );
+    expect(await promise).toMatchObject({ text: 'Clean draft.', review: 'approved' });
   });
 
   it('warns the model when few research rounds remain', async () => {

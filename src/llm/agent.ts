@@ -288,8 +288,9 @@ export async function answerQuestion(opts: AgentOptions): Promise<AgentResult> {
 
       if (calls.length === 0) {
         const content = stripThinking(message.content ?? '');
-        if (!content && llmCalls.at(-1)?.truncated && !cutOff) {
-          // The reply ran out of tokens before any answer (e.g. endless reasoning); ask once more.
+        if (llmCalls.at(-1)?.truncated && !cutOff) {
+          // The reply ran out of tokens (e.g. endless reasoning or a half-finished
+          // calculation); a cut-off answer must not reach the player, so ask once more.
           cutOff = true;
           messages.push({ role: 'user', content: TRUNCATED_PROMPT });
           continue;
@@ -343,8 +344,9 @@ export async function answerQuestion(opts: AgentOptions): Promise<AgentResult> {
       messages.push({ role: 'assistant', content: text });
       messages.push({ role: 'user', content: REVIEW_PROMPT });
       // A failed review keeps the draft rather than losing the answer.
+      // A cut-off review is half-finished reasoning, not an answer: keep the draft.
       const verdict = await complete(false, 'review')
-        .then((m) => stripThinking(m.content ?? ''))
+        .then((m) => (llmCalls.at(-1)?.truncated ? '' : stripThinking(m.content ?? '')))
         .catch(() => '');
       const missing = /^RESEARCH:\s*([\s\S]*)$/i.exec(verdict);
       if (missing) {
