@@ -39,14 +39,18 @@ Discord user ──/ask──▶ Bot ──▶ LLM (OpenAI-compatible API)
 ```
 
 1. A player asks a question with `/ask`.
-2. The bot sends the question to an LLM along with a set of **tools**. At
-   first, the LLM only gets the rules tools, so every answer starts from the
-   player rules for the game variant.
+2. The bot sends the question to an LLM, together with notes on any game
+   abbreviations in it (e.g. SSTO = summon storm). The LLM first writes a
+   short research plan. Then it gets a set of **tools**, at first only the
+   rules tools, so every answer starts from the player rules for the game
+   variant.
 3. If the rules don't settle the question, the code tools become available.
    The LLM can then search the source, read files, and look up items, skills
    and buildings in the `gamedata.cpp` tables. It keeps going until it has
    enough to answer.
-4. The bot posts the answer, with source references, in a new thread. Players
+4. The LLM reviews its draft against what it found. It can approve it,
+   correct it, or do one more round of research if something is missing.
+5. The bot posts the answer, with source references, in a new thread. Players
    can ask follow-up questions by replying in the thread.
 
 The retrieval is *agentic* (the model calls tools) rather than based on
@@ -62,12 +66,19 @@ variant with the game's own `Makefile` and runs `<variant> genrules`. That
 produces the same rules HTML that players get. The bot converts it to Markdown
 under `RULES_DIR`. The build runs on a `git archive` export, so the clone stays
 clean. The first build takes a minute or less; after that, rules are cached per
-commit. If a build fails, the bot falls back to the committed
+commit.
+
+The rules don't describe monsters or spells, so the bot also compiles a small
+program (`native/compendium.cpp`) against the game engine. It prints the
+engine's own descriptions of every monster, item, skill, spell and building,
+the same text players get in their turn reports. These descriptions are
+appended to the rules as a Compendium, so questions like "what does it take to
+kill a Balrog?" are answered from the game's actual numbers. If a build fails, the bot falls back to the committed
 `snapshot-tests/rules/<variant>.html`, if the branch has one. Without either,
 it researches the code only.
 
-The rules build runs the game repository's `Makefile` and the resulting game
-binary on the bot's machine, so only point `GAME_REPO_URL` at a repository you
+The rules build runs the game repository's `Makefile`, the resulting game
+binary and the compendium program on the bot's machine, so only point `GAME_REPO_URL` at a repository you
 trust (or set `RULES_BUILD=false`). The LLM itself never runs anything; its
 tools only read.
 
@@ -169,8 +180,11 @@ All configuration is done with environment variables, read from `.env` in develo
 | `OPENAI_API_KEY` | yes* | | API key. *Local servers usually accept any non-empty value. |
 | `LLM_MODEL` | yes | | Model name as the endpoint knows it, e.g. `gpt-4.1-mini`, `qwen3:32b` |
 | `LLM_TEMPERATURE` | no | `0.2` | Sampling temperature |
+| `LLM_TOP_P` | no | *(server default)* | Nucleus sampling (`top_p`); only sent when set |
 | `LLM_MAX_TOOL_ITERATIONS` | no | `16` | Maximum tool-call rounds per question |
 | `LLM_REQUEST_TIMEOUT_SECONDS` | no | `120` | Timeout for each LLM request |
+| `LLM_MAX_RETRIES` | no | `2` | Retries per LLM request, timeouts included. Use `0` for local servers, where a timed-out request usually times out again. |
+| `LLM_TOOL_OUTPUT_BUDGET` | no | `60000` | Total characters of tool output per question; protects the model's context window |
 | `LLM_PLAN_STEP` | no | `true` | Ask the model for a research plan before it starts looking things up |
 | `LLM_REVIEW_STEP` | no | `true` | Let the model check its draft answer against what it found, and research once more if something is missing |
 | `LLM_MAX_CONCURRENT` | no | `1` | Questions researched at the same time; others wait in a queue. Keep at 1 for most local servers. |
@@ -183,6 +197,25 @@ All configuration is done with environment variables, read from `.env` in develo
 | `RULES_BUILD` | no | `true` | Build the rules with the game's `Makefile`. If `false`, only committed rules snapshots are used. |
 | `RATE_LIMIT_PER_USER_PER_MINUTE` | no | `3` | Questions allowed per user per minute |
 | `LOG_LEVEL` | no | `info` | `debug`, `info`, `warn` or `error` |
+
+### Suggested settings for a local Qwen3 model
+
+A starting point for Qwen3-family models such as Qwen3.8-27B on oMLX. Qwen
+recommends temperature 0.6 and top_p 0.95 for its thinking mode; near-greedy
+sampling makes these models repeat themselves. The larger limits give
+multi-step questions room to finish. Check the effect on your setup with
+`npm run eval`.
+
+```
+LLM_TEMPERATURE=0.6
+LLM_TOP_P=0.95
+LLM_MAX_TOOL_ITERATIONS=24
+LLM_TOOL_OUTPUT_BUDGET=150000
+LLM_REQUEST_TIMEOUT_SECONDS=600
+LLM_MAX_RETRIES=0
+```
+
+The model's context window must hold about 80k tokens with these settings.
 
 ### Choosing the branch
 
@@ -219,10 +252,17 @@ ruling and the published rules for your game take precedence.
 ```sh
 npm run dev        # run with auto-reload
 npm run ask -- "…" # ask a question from the terminal
+npm run eval       # answer-quality evals against the configured LLM (slow)
 npm test           # unit tests (vitest)
 npm run lint       # eslint
 npm run typecheck  # tsc --noEmit
 ```
+
+`npm run eval` asks the questions in `evals/questions.json` and checks each
+answer for the facts it must contain. It records time and tool use, saves a
+report under `data/evals/`, and compares it with the previous run. Use it to
+compare models, prompts and settings. `--only <id>` and `--tier hard` run a
+subset.
 
 See [CLAUDE.md](CLAUDE.md) for architecture, conventions and design decisions.
 

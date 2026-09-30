@@ -8,6 +8,12 @@ import type { LlmClient } from '../../src/llm/client.js';
 export interface ScriptedReply {
   content?: string | null;
   toolCalls?: { name: string; args: string; id?: string }[];
+  /** Makes this call fail, e.g. to simulate a timeout. */
+  error?: string;
+}
+
+export function fail(message = 'Request timed out.'): ScriptedReply {
+  return { error: message };
 }
 
 export function reply(content: string): ScriptedReply {
@@ -37,6 +43,7 @@ export function fakeLlm(script: ScriptedReply[]): LlmClient & {
       requests.push(structuredClone(params));
       const next = script.shift();
       if (!next) throw new Error('fakeLlm: script exhausted');
+      if (next.error) throw new Error(next.error);
       const tool_calls: ChatCompletionMessageFunctionToolCall[] | undefined = next.toolCalls?.map(
         (c) => ({
           id: c.id ?? '',

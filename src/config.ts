@@ -27,8 +27,14 @@ const envSchema = z.object({
   OPENAI_API_KEY: z.string().min(1, 'OPENAI_API_KEY is required (any value for local servers)'),
   LLM_MODEL: z.string().min(1, 'LLM_MODEL is required'),
   LLM_TEMPERATURE: withDefault(z.coerce.number().min(0).max(2), 0.2),
+  LLM_TOP_P: z.preprocess(
+    (v) => (v === '' ? undefined : v),
+    z.coerce.number().gt(0).max(1).optional(),
+  ),
   LLM_MAX_TOOL_ITERATIONS: withDefault(z.coerce.number().int().min(1).max(50), 16),
   LLM_REQUEST_TIMEOUT_SECONDS: withDefault(z.coerce.number().int().positive(), 120),
+  LLM_MAX_RETRIES: withDefault(z.coerce.number().int().min(0).max(10), 2),
+  LLM_TOOL_OUTPUT_BUDGET: withDefault(z.coerce.number().int().positive(), 60000),
   LLM_MAX_CONCURRENT: withDefault(z.coerce.number().int().positive(), 1),
   LLM_PLAN_STEP: withDefault(z.stringbool(), 'true'),
   LLM_REVIEW_STEP: withDefault(z.stringbool(), 'true'),
@@ -50,8 +56,14 @@ export interface LlmConfig {
   apiKey: string;
   model: string;
   temperature: number;
+  /** Nucleus sampling; sent only when set. */
+  topP: number | undefined;
   maxToolIterations: number;
   requestTimeoutMs: number;
+  /** SDK retries per request (timeouts included). */
+  maxRetries: number;
+  /** Total characters of tool output per question. */
+  toolOutputBudget: number;
   maxConcurrent: number;
   /** Ask for a research plan before the tool loop. */
   planStep: boolean;
@@ -106,8 +118,11 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
       apiKey: e.OPENAI_API_KEY,
       model: e.LLM_MODEL,
       temperature: e.LLM_TEMPERATURE,
+      topP: e.LLM_TOP_P,
       maxToolIterations: e.LLM_MAX_TOOL_ITERATIONS,
       requestTimeoutMs: e.LLM_REQUEST_TIMEOUT_SECONDS * 1000,
+      maxRetries: e.LLM_MAX_RETRIES,
+      toolOutputBudget: e.LLM_TOOL_OUTPUT_BUDGET,
       maxConcurrent: e.LLM_MAX_CONCURRENT,
       planStep: e.LLM_PLAN_STEP,
       reviewStep: e.LLM_REVIEW_STEP,

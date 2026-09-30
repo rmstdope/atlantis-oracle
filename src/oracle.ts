@@ -95,6 +95,8 @@ export class Oracle {
         llm: this.llm,
         model: this.config.llm.model,
         temperature: this.config.llm.temperature,
+        topP: this.config.llm.topP,
+        toolOutputBudget: this.config.llm.toolOutputBudget,
         maxIterations: this.config.llm.maxToolIterations,
         messages,
         tools,
@@ -116,6 +118,7 @@ export class Oracle {
         iterations: result.iterations,
         hitIterationCap: result.hitIterationCap,
         review: result.review,
+        recovered: result.recovered,
         toolCalls: result.toolCalls.map((c) =>
           `${c.name}${c.ok ? '' : '!'} ${c.args}`.slice(0, 200),
         ),

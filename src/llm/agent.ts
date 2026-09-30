@@ -25,6 +25,8 @@ export interface AgentResult {
   iterations: number;
   hitIterationCap: boolean;
   review?: ReviewOutcome;
+  /** True when a failed LLM call during research was recovered by answering early. */
+  recovered?: boolean;
   usage: { promptTokens: number; completionTokens: number; cachedTokens: number };
 }
 
@@ -34,6 +36,7 @@ export interface AgentOptions {
   llm: LlmClient;
   model: string;
   temperature: number;
+  topP?: number;
   maxIterations: number;
   /** System prompt plus conversation so far, ending with the user's question. */
   messages: ChatCompletionMessageParam[];
@@ -63,6 +66,9 @@ export const FALLBACK_ANSWER =
 const RULES_FIRST_PROMPT =
   'Before answering, look the question up in the game rules with the rules tools. ' +
   'If the rules do not settle it, you can research the code afterwards.';
+
+/** Tool outputs are cut to this length when recovering from a failed call. */
+const RECOVERY_TOOL_CHARS = 1500;
 
 const FORCE_ANSWER_PROMPT =
   'You have used all available research steps. Answer the question now using only what you have ' +
@@ -107,6 +113,7 @@ export async function answerQuestion(opts: AgentOptions): Promise<AgentResult> {
   const memory = new CallMemory();
   let iterations = 0;
   let hitIterationCap = false;
+  let recovered = false;
 
   const complete = async (withTools: boolean) => {
     const res = await opts.llm.complete(
@@ -114,6 +121,7 @@ export async function answerQuestion(opts: AgentOptions): Promise<AgentResult> {
         model: opts.model,
         messages,
         temperature: opts.temperature,
+        ...(opts.topP !== undefined ? { top_p: opts.topP } : {}),
         ...(withTools
           ? { tools: unlocked ? allTools : firstOnly, tool_choice: 'auto' as const }
           : {}),
@@ -175,11 +183,42 @@ export async function answerQuestion(opts: AgentOptions): Promise<AgentResult> {
     messages.push({ role: 'tool', tool_call_id: call.id, content: output });
   };
 
+  /** Asks for an answer from what has been found, without tools. */
+  const forceAnswer = async (shorten: boolean): Promise<string> => {
+    if (shorten) {
+      // A failed call usually means the context got too large for the server.
+      for (const m of messages) {
+        if (
+          m.role === 'tool' &&
+          typeof m.content === 'string' &&
+          m.content.length > RECOVERY_TOOL_CHARS
+        ) {
+          m.content = `${m.content.slice(0, RECOVERY_TOOL_CHARS)}\n[shortened]`;
+        }
+      }
+    }
+    iterations++;
+    messages.push({ role: 'user', content: FORCE_ANSWER_PROMPT });
+    return stripThinking((await complete(false)).content ?? '');
+  };
+
   /** The tool loop: returns the model's answer once it stops calling tools. */
   const research = async (maxRounds: number): Promise<string> => {
     for (let round = 1; round <= maxRounds; round++) {
       iterations++;
-      const message = await complete(true);
+      let message;
+      try {
+        message = await complete(true);
+      } catch (err) {
+        // Keep the research done so far instead of failing the whole question.
+        if (opts.signal?.aborted || toolCalls.length === 0) throw err;
+        recovered = true;
+        try {
+          return await forceAnswer(true);
+        } catch {
+          throw err;
+        }
+      }
       const calls = (message.tool_calls ?? [])
         .filter((c): c is ChatCompletionMessageFunctionToolCall => c.type === 'function')
         .map((c) => ({ ...c, id: c.id || `call_${randomUUID()}` }));
@@ -200,15 +239,16 @@ export async function answerQuestion(opts: AgentOptions): Promise<AgentResult> {
     }
 
     hitIterationCap = true;
-    iterations++;
-    messages.push({ role: 'user', content: FORCE_ANSWER_PROMPT });
-    return stripThinking((await complete(false)).content ?? '');
+    return forceAnswer(false);
   };
 
   if (opts.planStep) {
     opts.onPhase?.('planning');
     messages.push({ role: 'user', content: PLAN_PROMPT });
-    const plan = stripThinking((await complete(false)).content ?? '');
+    // The plan is an aid; a failed call just means researching without one.
+    const plan = await complete(false)
+      .then((m) => stripThinking(m.content ?? ''))
+      .catch(() => '');
     if (plan) {
       messages.push({ role: 'assistant', content: plan });
       messages.push({ role: 'user', content: START_RESEARCH_PROMPT });
@@ -225,7 +265,10 @@ export async function answerQuestion(opts: AgentOptions): Promise<AgentResult> {
     opts.onPhase?.('reviewing');
     messages.push({ role: 'assistant', content: text });
     messages.push({ role: 'user', content: REVIEW_PROMPT });
-    const verdict = stripThinking((await complete(false)).content ?? '');
+    // A failed review keeps the draft rather than losing the answer.
+    const verdict = await complete(false)
+      .then((m) => stripThinking(m.content ?? ''))
+      .catch(() => '');
     const missing = /^RESEARCH:\s*([\s\S]*)$/i.exec(verdict);
     if (missing) {
       review = 'researched';
@@ -250,6 +293,7 @@ export async function answerQuestion(opts: AgentOptions): Promise<AgentResult> {
     iterations,
     hitIterationCap,
     review,
+    recovered,
     usage,
   };
 }

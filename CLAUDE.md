@@ -134,8 +134,11 @@ test/                   mirrors src/; helpers/ has the fixture path and a script
    returns a final answer or `LLM_MAX_TOOL_ITERATIONS` is reached. When the cap
    is hit, it makes one last call without tools to force an answer from what
    has been gathered.
-   Total tool output per question is capped (60k characters) to protect small
-   context windows. A call that repeats an earlier successful one (same tool and
+   Total tool output per question is capped (`LLM_TOOL_OUTPUT_BUDGET`, default
+   60k characters) to protect small context windows. If an LLM call fails
+   mid-research (e.g. a timeout on a huge context), the agent shortens the tool
+   results and forces an answer from them instead of failing the question. A
+   failed plan or review call is skipped. A call that repeats an earlier successful one (same tool and
    arguments, or a `read_file`/`read_rules` range inside an earlier read) gets a
    short "already shown in step N" note instead, which costs no budget.
 4. While the agent works, `handlers.ts` keeps a progress message up to date
@@ -184,7 +187,7 @@ Rules for tools:
 
 - Only depend on features that common OpenAI-compatible servers support:
   `chat.completions.create` with `messages`, `tools`, `tool_choice: "auto"`,
-  `temperature`, `max_tokens`. No `response_format` JSON schema, no
+  `temperature`, `top_p` (only when `LLM_TOP_P` is set), `max_tokens`. No `response_format` JSON schema, no
   `parallel_tool_calls` flag, no logprobs, no streaming requirement.
 - Handle more than one tool call in a response, and also exactly one.
 - Tolerate imperfect local models: malformed JSON in tool arguments (return a

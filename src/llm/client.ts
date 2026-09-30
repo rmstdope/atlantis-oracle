@@ -18,7 +18,7 @@ export function createLlmClient(cfg: LlmConfig): LlmClient {
     baseURL: cfg.baseURL,
     apiKey: cfg.apiKey,
     timeout: cfg.requestTimeoutMs,
-    maxRetries: 2,
+    maxRetries: cfg.maxRetries,
   });
   return {
     complete: (params, signal) => openai.chat.completions.create(params, { signal }),

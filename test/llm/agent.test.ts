@@ -10,7 +10,7 @@ import {
 import { codeTools, defaultTools, type Tool } from '../../src/tools/index.js';
 import { defineTool } from '../../src/tools/types.js';
 import { z } from 'zod';
-import { callTools, fakeLlm, reply, type ScriptedReply } from '../helpers/fakeLlm.js';
+import { callTools, fail, fakeLlm, reply, type ScriptedReply } from '../helpers/fakeLlm.js';
 import { FIXTURE_REPO } from '../helpers/fixture.js';
 
 function run(script: ScriptedReply[], overrides: Partial<AgentOptions> = {}) {
@@ -208,6 +208,52 @@ describe('plan and review steps', () => {
     });
     expect(await promise).toMatchObject({ text: 'answer', review: 'approved' });
     expect(llm.requests[1]!.messages.map((m) => m.role)).toEqual(['system', 'user']);
+  });
+});
+
+describe('failure recovery', () => {
+  it('answers from the research so far when a call fails mid-research', async () => {
+    const longOutput = defineTool({
+      name: 'read_everything',
+      description: 'long output',
+      schema: z.object({}),
+      handler: async () => 'x'.repeat(5000),
+    }) as Tool;
+    const { llm, promise } = run(
+      [callTools(['read_everything', {}]), fail(), reply('Answer from what was found.')],
+      { tools: [longOutput] },
+    );
+    const r = await promise;
+    expect(r).toMatchObject({ text: 'Answer from what was found.', recovered: true });
+    const last = llm.requests[2]!;
+    expect(last.tools).toBeUndefined();
+    const tool = last.messages.find((m) => m.role === 'tool');
+    // Long tool output is shortened for the recovery call.
+    expect(String(tool!.content)).toMatch(/\[shortened\]$/);
+    expect(String(tool!.content).length).toBeLessThan(1600);
+  });
+
+  it('fails when nothing has been researched yet', async () => {
+    await expect(run([fail('boom')]).promise).rejects.toThrow('boom');
+  });
+
+  it('reports the original error when recovery also fails', async () => {
+    const { promise } = run([callTools(['list_dir', {}]), fail('first'), fail('second')]);
+    await expect(promise).rejects.toThrow('first');
+  });
+
+  it('skips a failed plan and keeps the draft when the review fails', async () => {
+    const { promise } = run([fail(), reply('draft'), fail()], { planStep: true, reviewStep: true });
+    expect(await promise).toMatchObject({ text: 'draft', review: 'approved' });
+  });
+
+  it('sends top_p only when configured', async () => {
+    const a = run([reply('x')]);
+    await a.promise;
+    expect(a.llm.requests[0]).not.toHaveProperty('top_p');
+    const b = run([reply('x')], { topP: 0.95 });
+    await b.promise;
+    expect(b.llm.requests[0]!.top_p).toBe(0.95);
   });
 });
 

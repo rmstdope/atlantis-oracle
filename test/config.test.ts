@@ -13,6 +13,9 @@ describe('loadConfig', () => {
     expect(c.llm.requestTimeoutMs).toBe(120_000);
     expect(c.llm.maxConcurrent).toBe(1);
     expect(c.llm.planStep).toBe(true);
+    expect(c.llm.topP).toBeUndefined();
+    expect(c.llm.maxRetries).toBe(2);
+    expect(c.llm.toolOutputBudget).toBe(60000);
     expect(c.llm.reviewStep).toBe(true);
     expect(c.repo.url).toBe('https://github.com/Atlantis-PBEM/Atlantis.git');
     expect(c.repo.branch).toBeUndefined();
@@ -41,7 +44,11 @@ describe('loadConfig', () => {
       GAME_REPO_SYNC_INTERVAL_MINUTES: '0',
       ALLOWED_CHANNEL_IDS: ' 1, 2 ,,3',
       RULES_BUILD: 'false',
+      LLM_TOP_P: '0.95',
+      LLM_MAX_RETRIES: '0',
     });
+    expect(c.llm.topP).toBe(0.95);
+    expect(c.llm.maxRetries).toBe(0);
     expect(c.rules.build).toBe(false);
     expect(c.llm.temperature).toBe(0.7);
     expect(c.repo.syncIntervalMinutes).toBe(0);
