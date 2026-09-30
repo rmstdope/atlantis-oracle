@@ -365,6 +365,53 @@ describe('runaway generations and round budget', () => {
   });
 });
 
+describe('thinking control', () => {
+  const kwargs = (req: object) => (req as { chat_template_kwargs?: unknown }).chat_template_kwargs;
+  const script = () => [
+    reply('plan'),
+    callTools(['list_dir', {}]),
+    reply('draft'),
+    reply('APPROVED'),
+  ];
+
+  it('sends nothing by default', async () => {
+    const { llm, promise } = run(script(), { planStep: true, reviewStep: true });
+    await promise;
+    expect(llm.requests.map(kwargs)).toEqual([undefined, undefined, undefined, undefined]);
+  });
+
+  it('switches reasoning off everywhere', async () => {
+    const { llm, promise } = run(script(), {
+      planStep: true,
+      reviewStep: true,
+      thinking: 'off',
+      maxTokens: 4096,
+      finalMaxTokens: 8192,
+    });
+    const r = await promise;
+    expect(llm.requests.map(kwargs)).toEqual(Array(4).fill({ enable_thinking: false }));
+    expect(llm.requests.map((q) => q.max_tokens)).toEqual([4096, 4096, 4096, 4096]);
+    expect(r.llmCalls.every((c) => !c.thinking)).toBe(true);
+  });
+
+  it('reasons only for the review and forced answer in final mode', async () => {
+    const { llm, promise } = run(script(), {
+      planStep: true,
+      reviewStep: true,
+      thinking: 'final',
+      maxTokens: 4096,
+      finalMaxTokens: 8192,
+    });
+    await promise;
+    expect(llm.requests.map((q) => [kwargs(q), q.max_tokens])).toEqual([
+      [{ enable_thinking: false }, 4096], // plan
+      [{ enable_thinking: false }, 4096], // research
+      [{ enable_thinking: false }, 4096], // research (draft)
+      [{ enable_thinking: true }, 8192], // review
+    ]);
+  });
+});
+
 describe('loop guard', () => {
   it('answers repeated calls with a pointer to the earlier step', async () => {
     const { llm, promise } = run([

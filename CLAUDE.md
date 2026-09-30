@@ -192,7 +192,11 @@ Rules for tools:
 
 - Only depend on features that common OpenAI-compatible servers support:
   `chat.completions.create` with `messages`, `tools`, `tool_choice: "auto"`,
-  `temperature`, `top_p` (only when `LLM_TOP_P` is set), `max_tokens`. No `response_format` JSON schema, no
+  `temperature`, `top_p` (only when `LLM_TOP_P` is set), `max_tokens`. The one
+  non-OpenAI field, `chat_template_kwargs.enable_thinking`, is sent only when
+  `LLM_THINKING` is `off` or `final`. On oMLX with Qwen3.8 it cut a trivial
+  question from 89s and 1,500 tokens (cut off) to 3s and 42 tokens; the `/no_think`
+  prompt switch and a top-level `enable_thinking` were ignored. No `response_format` JSON schema, no
   `parallel_tool_calls` flag, no logprobs, no streaming requirement.
 - Handle more than one tool call in a response, and also exactly one.
 - Tolerate imperfect local models: malformed JSON in tool arguments (return a

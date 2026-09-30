@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type {
+  ChatCompletionCreateParamsNonStreaming,
   ChatCompletionMessageFunctionToolCall,
   ChatCompletionMessageParam,
 } from 'openai/resources/chat/completions';
@@ -26,6 +27,8 @@ export interface LlmCallRecord {
   completionTokens: number;
   /** The reply hit max_tokens and was cut off. */
   truncated?: boolean;
+  /** Whether the model was allowed to reason (false when switched off via LLM_THINKING). */
+  thinking: boolean;
   error?: string;
 }
 
@@ -53,6 +56,16 @@ export interface AgentOptions {
   topP?: number;
   /** Output cap per LLM call; stops runaway generations (e.g. looping reasoning). */
   maxTokens?: number;
+  /**
+   * Reasoning ("thinking") control for servers that support
+   * chat_template_kwargs.enable_thinking (vLLM, SGLang, oMLX):
+   * on = send nothing (server default), off = no reasoning on any call,
+   * final = no reasoning while researching, reasoning for the forced answer
+   * and the review, which then use finalMaxTokens.
+   */
+  thinking?: 'on' | 'off' | 'final';
+  /** Output cap for calls that reason in 'final' mode. */
+  finalMaxTokens?: number;
   maxIterations: number;
   /** System prompt plus conversation so far, ending with the user's question. */
   messages: ChatCompletionMessageParam[];
@@ -152,24 +165,30 @@ export async function answerQuestion(opts: AgentOptions): Promise<AgentResult> {
 
   const complete = async (withTools: boolean, purpose: LlmCallRecord['purpose']) => {
     const started = Date.now();
+    const mode = opts.thinking ?? 'on';
+    const thinking =
+      mode === 'on' || (mode === 'final' && (purpose === 'answer' || purpose === 'review'));
+    const maxTokens =
+      mode === 'final' && thinking ? (opts.finalMaxTokens ?? opts.maxTokens) : opts.maxTokens;
+    const params = {
+      model: opts.model,
+      messages,
+      temperature: opts.temperature,
+      ...(opts.topP !== undefined ? { top_p: opts.topP } : {}),
+      ...(maxTokens !== undefined ? { max_tokens: maxTokens } : {}),
+      ...(withTools
+        ? { tools: unlocked ? allTools : firstOnly, tool_choice: 'auto' as const }
+        : {}),
+      // Not part of the OpenAI API; sent only when LLM_THINKING asks for it.
+      ...(mode !== 'on' ? { chat_template_kwargs: { enable_thinking: thinking } } : {}),
+    } as ChatCompletionCreateParamsNonStreaming;
     let res;
     try {
-      res = await opts.llm.complete(
-        {
-          model: opts.model,
-          messages,
-          temperature: opts.temperature,
-          ...(opts.topP !== undefined ? { top_p: opts.topP } : {}),
-          ...(opts.maxTokens !== undefined ? { max_tokens: opts.maxTokens } : {}),
-          ...(withTools
-            ? { tools: unlocked ? allTools : firstOnly, tool_choice: 'auto' as const }
-            : {}),
-        },
-        opts.signal,
-      );
+      res = await opts.llm.complete(params, opts.signal);
     } catch (err) {
       llmCalls.push({
         purpose,
+        thinking,
         ms: Date.now() - started,
         promptTokens: 0,
         cachedTokens: 0,
@@ -180,6 +199,7 @@ export async function answerQuestion(opts: AgentOptions): Promise<AgentResult> {
     }
     llmCalls.push({
       purpose,
+      thinking,
       ms: Date.now() - started,
       promptTokens: res.usage?.prompt_tokens ?? 0,
       cachedTokens: res.usage?.prompt_tokens_details?.cached_tokens ?? 0,

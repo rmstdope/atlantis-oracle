@@ -35,6 +35,8 @@ const envSchema = z.object({
   LLM_REQUEST_TIMEOUT_SECONDS: withDefault(z.coerce.number().int().positive(), 120),
   LLM_MAX_RETRIES: withDefault(z.coerce.number().int().min(0).max(10), 2),
   LLM_MAX_TOKENS: withDefault(z.coerce.number().int().positive(), 4096),
+  LLM_THINKING: withDefault(z.enum(['on', 'off', 'final']), 'on'),
+  LLM_FINAL_MAX_TOKENS: withDefault(z.coerce.number().int().positive(), 8192),
   LLM_TOOL_OUTPUT_BUDGET: withDefault(z.coerce.number().int().positive(), 60000),
   LLM_MAX_CONCURRENT: withDefault(z.coerce.number().int().positive(), 1),
   LLM_PLAN_STEP: withDefault(z.stringbool(), 'true'),
@@ -65,6 +67,10 @@ export interface LlmConfig {
   maxRetries: number;
   /** Output cap per request (max_tokens). */
   maxTokens: number;
+  /** Reasoning control via chat_template_kwargs; 'on' sends nothing. */
+  thinking: 'on' | 'off' | 'final';
+  /** Output cap for reasoning calls in 'final' mode. */
+  finalMaxTokens: number;
   /** Total characters of tool output per question. */
   toolOutputBudget: number;
   maxConcurrent: number;
@@ -126,6 +132,8 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
       requestTimeoutMs: e.LLM_REQUEST_TIMEOUT_SECONDS * 1000,
       maxRetries: e.LLM_MAX_RETRIES,
       maxTokens: e.LLM_MAX_TOKENS,
+      thinking: e.LLM_THINKING,
+      finalMaxTokens: e.LLM_FINAL_MAX_TOKENS,
       toolOutputBudget: e.LLM_TOOL_OUTPUT_BUDGET,
       maxConcurrent: e.LLM_MAX_CONCURRENT,
       planStep: e.LLM_PLAN_STEP,

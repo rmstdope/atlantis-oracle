@@ -97,6 +97,8 @@ export class Oracle {
         temperature: this.config.llm.temperature,
         topP: this.config.llm.topP,
         maxTokens: this.config.llm.maxTokens,
+        thinking: this.config.llm.thinking,
+        finalMaxTokens: this.config.llm.finalMaxTokens,
         toolOutputBudget: this.config.llm.toolOutputBudget,
         maxIterations: this.config.llm.maxToolIterations,
         messages,

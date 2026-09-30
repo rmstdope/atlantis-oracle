@@ -185,6 +185,8 @@ All configuration is done with environment variables, read from `.env` in develo
 | `LLM_REQUEST_TIMEOUT_SECONDS` | no | `120` | Timeout for each LLM request |
 | `LLM_MAX_RETRIES` | no | `2` | Retries per LLM request, timeouts included. Use `0` for local servers, where a timed-out request usually times out again. |
 | `LLM_MAX_TOKENS` | no | `4096` | Output cap per LLM request (`max_tokens`). Stops a looping model from blocking a question; a reply cut off before any answer gets one retry. |
+| `LLM_THINKING` | no | `on` | Reasoning ("thinking") for models that have it: `on` sends nothing (server default), `off` switches it off for every call, `final` switches it off while researching and on for the final answer and review. `off`/`final` send `chat_template_kwargs.enable_thinking`, which vLLM, SGLang and oMLX understand. |
+| `LLM_FINAL_MAX_TOKENS` | no | `8192` | Output cap for the reasoning calls in `LLM_THINKING=final` mode |
 | `LLM_TOOL_OUTPUT_BUDGET` | no | `60000` | Total characters of tool output per question; protects the model's context window |
 | `LLM_PLAN_STEP` | no | `true` | Ask the model for a research plan before it starts looking things up |
 | `LLM_REVIEW_STEP` | no | `true` | Let the model check its draft answer against what it found, and research once more if something is missing |
