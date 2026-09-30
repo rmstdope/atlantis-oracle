@@ -60,8 +60,12 @@ describe('footer', () => {
 describe('question header', () => {
   it('round-trips', () => {
     const content = formatQuestion('123', 'How does TACT work?\nSecond line');
-    expect(content).toContain('<@123>');
+    expect(content).toBe(
+      'We are Borg!\n<@123> asked:\n**Question:** How does TACT work?\nSecond line\n[Accessing collective hive mind ... ]',
+    );
     expect(parseQuestion(content)).toBe('How does TACT work?\nSecond line');
+    // Starter messages posted before the Borg text was added still parse.
+    expect(parseQuestion('<@123> asked:\n**Question:** Old question')).toBe('Old question');
     expect(parseQuestion('something else')).toBeUndefined();
   });
 });

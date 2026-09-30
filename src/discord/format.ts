@@ -64,16 +64,19 @@ export function footer(info: {
 }
 
 const QUESTION_PREFIX = '**Question:** ';
+const QUESTION_SUFFIX = '[Accessing collective hive mind ... ]';
 
 /** The /ask reply that becomes the thread's starter message. */
 export function formatQuestion(userId: string, question: string): string {
-  return `<@${userId}> asked:\n${QUESTION_PREFIX}${question}`;
+  return `We are Borg!\n<@${userId}> asked:\n${QUESTION_PREFIX}${question}\n${QUESTION_SUFFIX}`;
 }
 
 /** Recovers the question from a starter message made by formatQuestion. */
 export function parseQuestion(content: string): string | undefined {
   const i = content.indexOf(QUESTION_PREFIX);
-  return i === -1 ? undefined : content.slice(i + QUESTION_PREFIX.length).trim();
+  if (i === -1) return undefined;
+  const rest = content.slice(i + QUESTION_PREFIX.length).trim();
+  return rest.endsWith(QUESTION_SUFFIX) ? rest.slice(0, -QUESTION_SUFFIX.length).trim() : rest;
 }
 
 const THREAD_NAME_MAX = 100;
