@@ -242,12 +242,19 @@ them in one place (`llm/prompts.ts`).
 
 - Answer from what the tools returned, not from general knowledge of other
   Atlantis versions. If the repo doesn't settle a question, say so.
-- State which variant the answer applies to when variants differ.
-- Cite sources as `path:line`. `discord/format.ts` may turn these into GitHub
-  links using the repo URL and the current commit.
+- Short and to the point, unless the player asks for details.
 - Write for players, not C++ programmers. Explain the effect first, then the
   supporting detail. Quote code only when it helps.
-- Discord markdown only, and keep answers concise. Do not use headings for short answers.
+- Sources go in a separate part at the end of the answer, not inline: rules as
+  `rules § <section>`, code as `path:line`. `discord/format.ts` may turn these
+  into GitHub links using the repo URL and the current commit.
+- Never explain loopholes or code flaws that players could exploit; the review
+  step checks this too.
+- Harder question types have playbooks in the prompt ("what does it take to
+  beat X", "is order X enough", "what should I consider against X"): Compendium
+  numbers plus rules formulas, a worked example with stated assumptions, and
+  counters backed by sources.
+- Discord markdown only. Do not use headings for short answers.
 
 ## Conventions
 
