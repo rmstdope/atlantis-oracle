@@ -76,6 +76,7 @@ src/
     client.ts           LlmClient interface + OpenAI SDK implementation
     agent.ts            tool-calling loop (the core of the bot)
     limiter.ts          FIFO semaphore for LLM_MAX_CONCURRENT
+    glossary.ts         finds all-caps game abbreviations (SSTO, BALR) in the question
     prompts.ts          system prompt + Atlantis codebase hints
   repo/
     sync.ts             GameRepo: clone, fetch + hard reset, commit, variant discovery
@@ -116,7 +117,8 @@ test/                   mirrors src/; helpers/ has the fixture path and a script
    The thread name ends in ` · <variant>`, so follow-ups need no stored state.
 2. For follow-ups, `discord/history.ts` rebuilds the turns from the thread's
    starter message and its last 20 messages. `oracle.ts` adds the system prompt
-   (repo, commit, selected variant, whether rules exist) and takes an
+   (repo, commit, selected variant, whether rules exist, and a note that expands
+   abbreviations found by `llm/glossary.ts`, e.g. `SSTO = skill "summon storm"`) and takes an
    `LLM_MAX_CONCURRENT` slot.
 3. `llm/agent.ts` runs the loop. **Rules first:** until the model has called a
    rules tool (`firstTools`), only the rules tools are offered. Code tool calls

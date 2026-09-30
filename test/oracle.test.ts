@@ -62,5 +62,15 @@ describe('Oracle', () => {
     expect(system!.content).toContain('No player rules are available');
     expect(rest.map((m) => m.content)).toEqual(['q1', 'a1', 'q2']);
     expect(llm.requests[0]!.tools).toHaveLength(4);
+    expect(system!.content).not.toContain('Game abbreviations');
+  });
+
+  it('explains abbreviations in the question', async () => {
+    const llm = fakeLlm([reply('answer')]);
+    await makeOracle(llm).ask({
+      turns: [{ role: 'user', content: 'Is PARM good?' }],
+      variant: 'neworigins',
+    });
+    expect(llm.requests[0]!.messages[0]!.content).toContain('PARM = item "plate armor"');
   });
 });

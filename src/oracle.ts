@@ -2,6 +2,7 @@ import type { ChatCompletionMessageParam } from 'openai/resources/chat/completio
 import type { Config } from './config.js';
 import type { Logger } from './logger.js';
 import { answerQuestion, type AgentResult } from './llm/agent.js';
+import { findAbbreviations, glossaryNote } from './llm/glossary.js';
 import type { LlmClient } from './llm/client.js';
 import { Limiter } from './llm/limiter.js';
 import { buildSystemPrompt } from './llm/prompts.js';
@@ -70,6 +71,8 @@ export class Oracle {
     const commit = this.repo.commit;
     const hasRules = this.rules.get(variant) !== undefined;
     const tools: Tool[] = hasRules ? [...rulesTools, ...codeTools] : codeTools;
+    const question = input.turns.at(-1)?.content ?? '';
+    const glossary = glossaryNote(await findAbbreviations(this.repo.dir, question));
     const messages: ChatCompletionMessageParam[] = [
       {
         role: 'system',
@@ -79,6 +82,7 @@ export class Oracle {
           variant,
           variants: this.repo.variants,
           hasRules,
+          glossary,
         }),
       },
       ...input.turns,

@@ -22,7 +22,8 @@ interface Cached {
 }
 const cache = new Map<string, Cached>();
 
-async function loadTables(root: string): Promise<Table[]> {
+/** Parsed gamedata.cpp tables with enum names, cached per repo root and file mtime. */
+export async function loadTables(root: string): Promise<Table[]> {
   const cppPath = path.join(root, 'gamedata.cpp');
   let mtimeMs: number;
   try {
