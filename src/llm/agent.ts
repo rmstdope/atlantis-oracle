@@ -29,6 +29,8 @@ export interface LlmCallRecord {
   truncated?: boolean;
   /** Whether the model was allowed to reason (false when switched off via LLM_THINKING). */
   thinking: boolean;
+  /** Tool calls the model asked for in this reply. */
+  requestedTools?: number;
   error?: string;
 }
 
@@ -109,6 +111,10 @@ const RULES_FIRST_PROMPT =
 
 /** When this many research rounds remain, tool results remind the model to conclude. */
 const BUDGET_WARNING_ROUNDS = 4;
+
+const NO_TOOLS_PROMPT =
+  'Tools are no longer available. Write your final answer to the player now, as text, ' +
+  'using what you have already found.';
 
 const TRUNCATED_PROMPT =
   'Your last reply was cut off because it was too long. Answer now, concisely, from what you have found.';
@@ -205,6 +211,9 @@ export async function answerQuestion(opts: AgentOptions): Promise<AgentResult> {
       cachedTokens: res.usage?.prompt_tokens_details?.cached_tokens ?? 0,
       completionTokens: res.usage?.completion_tokens ?? 0,
       ...(res.choices?.[0]?.finish_reason === 'length' ? { truncated: true } : {}),
+      ...(res.choices?.[0]?.message?.tool_calls?.length
+        ? { requestedTools: res.choices[0].message.tool_calls.length }
+        : {}),
     });
     usage.promptTokens += res.usage?.prompt_tokens ?? 0;
     usage.completionTokens += res.usage?.completion_tokens ?? 0;
@@ -281,7 +290,13 @@ export async function answerQuestion(opts: AgentOptions): Promise<AgentResult> {
     }
     iterations++;
     messages.push({ role: 'user', content: FORCE_ANSWER_PROMPT });
-    const reply = await complete(false, 'answer');
+    let reply = await complete(false, 'answer');
+    if (!stripThinking(reply.content ?? '') && reply.tool_calls?.length) {
+      // Some models keep calling tools even when none are offered; say so once.
+      iterations++;
+      messages.push({ role: 'user', content: NO_TOOLS_PROMPT });
+      reply = await complete(false, 'answer');
+    }
     // Servers return unfinished reasoning as plain content when max_tokens cuts
     // it off, so a cut-off reply is never an answer the player should see.
     return llmCalls.at(-1)?.truncated ? '' : stripThinking(reply.content ?? '');

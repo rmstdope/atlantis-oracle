@@ -327,6 +327,23 @@ describe('runaway generations and round budget', () => {
     });
   });
 
+  it('tells the model once when it calls tools instead of giving the forced answer', async () => {
+    const { llm, promise } = run(
+      [callTools(['list_dir', {}]), callTools(['list_dir', { path: 'standard' }]), reply('Final.')],
+      { maxIterations: 1 },
+    );
+    const r = await promise;
+    expect(r).toMatchObject({ text: 'Final.', hitIterationCap: true });
+    expect(r.llmCalls.map((c) => [c.purpose, c.requestedTools])).toEqual([
+      ['research', 1],
+      ['answer', 1],
+      ['answer', undefined],
+    ]);
+    expect(llm.requests[2]!.messages.at(-1)).toMatchObject({
+      content: expect.stringMatching(/Tools are no longer available/),
+    });
+  });
+
   it('does not send a cut-off forced answer', async () => {
     const { promise } = run(
       [callTools(['list_dir', {}]), { content: 'The user wants me to...', truncated: true }],

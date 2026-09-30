@@ -58,6 +58,7 @@ const describeLlmCall = (c: LlmCallRecord) =>
   `${c.purpose}${c.thinking ? '' : ' (no thinking)'} ${Math.round(c.ms / 1000)}s ${c.promptTokens}+${c.completionTokens} tokens` +
   ` (${c.cachedTokens} cached)` +
   (c.truncated ? ' TRUNCATED' : '') +
+  (c.requestedTools ? ` ${c.requestedTools} tool call(s)` : '') +
   (c.error ? ` ERROR ${c.error}` : '');
 
 const pct = (x: number) => `${Math.round(x * 100)}%`;
