@@ -1,0 +1,76 @@
+[
+  {
+    "id": "balrog-army",
+    "tier": "hard",
+    "variant": "standard",
+    "question": "What level of army is needed to take down a Balrog?",
+    "mustMention": ["\\b280\\b", "\\b200\\b", "hellfire", "\\b6\\b", "(%|odds|chance)"],
+    "mustNotMention": [],
+    "notes": "Balrog: combat skill 6, resistance 6 to melee/energy/spirit/weather, 5 to riding, 0 to ranged; 200 melee attacks/round, 280 hits, tactics 5; casts hellfire at level 4 (2-200 energy attacks). Hit odds: equal skill 1:1, each level of difference doubles (rules § Combat > The Battle). Sources: gamedata.cpp MonDefs Balrog entry, engine ItemDescription(BALR)."
+  },
+  {
+    "id": "attack-lair",
+    "tier": "hard",
+    "variant": "standard",
+    "question": "If I want to kill a monster and loot its lair, is it enough to just issue the order ATTACK <unitnum>?",
+    "mustMention": [
+      "(see|observation|stealth)",
+      "(catch|riding)",
+      "spoils?",
+      "(carry|capacity|weight|SPOILS)"
+    ],
+    "mustNotMention": ["(must|need to|have to) (enter|move into) the lair"],
+    "notes": "ATTACK starts a battle only if the attacker can see the target (runorders.cpp AttemptAttack: CanSee, else 'Non-existent unit') and can catch it (CanCatch/riding, else 'Can't catch that unit'). Lairs cannot be entered and give no protection (ObjectDefs Lair/Cave protect 0). There is no separate lair loot: treasure comes as battle spoils, i.e. random silver up to the monster's silver value plus possibly a random item of its spoil type (army.cpp GetMonSpoils), plus about half of the items the dead carried (battle.cpp GetSpoils). Winners only pick up spoils they can carry, per the SPOILS order (unit.cpp CanGetSpoil)."
+  },
+  {
+    "id": "ssto-defense",
+    "tier": "hard",
+    "variant": "standard",
+    "question": "What should I consider when defending against an army with SSTO?",
+    "mustMention": ["summon storm", "weather", "(-|−|minus )2", "(100|level)"],
+    "mustNotMention": [],
+    "notes": "SSTO = summon storm (Weather Lore spell). Engine description: between 2 and 100 times the mage's skill level weather attacks; each hit gives the target storm (-2 attack, -2 versus melee) for the rest of the battle; it doesn't target units already affected. Defense: resistance/shields against weather attacks, armor saves vs weather, the attacker's mage count and level."
+  },
+  {
+    "id": "study-comb3",
+    "tier": "medium",
+    "variant": "standard",
+    "question": "How many months does it take a 10-man unit to reach COMB 3 from scratch without a teacher, and how much silver does the studying cost?",
+    "mustMention": ["(6|six) months", "\\$?600"],
+    "mustNotMention": [],
+    "notes": "Level 1 needs 1 month, level 2 two more, level 3 three more: 6 months. Combat costs $10 per man per month: 10 x 10 x 6 = $600, plus maintenance (rules § Skills > Studying)."
+  },
+  {
+    "id": "mages-neworigins",
+    "tier": "regression",
+    "variant": "neworigins",
+    "question": "How many mages can a faction have if it puts 3 points into magic?",
+    "mustMention": ["\\b4\\b", "apprentice"],
+    "mustNotMention": [],
+    "notes": "New Origins faction points: Magic 3 = 4 mages / 7 apprentices (neworigins/rules.cpp am[] and aa[], rules § Playing Atlantis > Factions)."
+  },
+  {
+    "id": "tactics-cost",
+    "tier": "regression",
+    "variant": "standard",
+    "question": "What does it cost to study TACTICS, and what does the skill do in battle?",
+    "mustMention": ["\\$?200", "free round"],
+    "mustNotMention": [],
+    "notes": "$200 per man per month (rules § Skills > Studying). The better tactician's side gets a free round of attacks (rules § Combat > The Battle; battle.cpp FreeRound)."
+  },
+  {
+    "id": "standard-enabled-items",
+    "tier": "regression",
+    "variant": "standard",
+    "question": "Which items does the standard game enable that are not available by default?",
+    "mustMention": [
+      "pick",
+      "glider",
+      "(pirates|kraken)",
+      "spear[^.]*(already|default)",
+      "(underworld|underdeep)"
+    ],
+    "mustNotMention": [],
+    "notes": "standard/extra.cpp EnableItem calls. The spear is enabled by default already. Mushroom, healing potion, rough gem and gems are only enabled with underworld/underdeep levels, which standard sets to 0 (standard/rules.cpp)."
+  }
+]

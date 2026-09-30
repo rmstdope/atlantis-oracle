@@ -17,7 +17,8 @@
     "format": "prettier --write .",
     "typecheck": "tsc --noEmit",
     "register-commands": "tsx src/discord/register.ts",
-    "ask": "tsx src/cli.ts"
+    "ask": "tsx src/cli.ts",
+    "eval": "tsx src/evals/run.ts"
   },
   "dependencies": {
     "@vscode/ripgrep": "^1.18.0",
