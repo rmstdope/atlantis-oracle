@@ -131,8 +131,12 @@ export async function answerQuestion(opts: AgentOptions): Promise<AgentResult> {
     usage.promptTokens += res.usage?.prompt_tokens ?? 0;
     usage.completionTokens += res.usage?.completion_tokens ?? 0;
     usage.cachedTokens += res.usage?.prompt_tokens_details?.cached_tokens ?? 0;
-    const message = res.choices[0]?.message;
-    if (!message) throw new Error('LLM response contained no message');
+    // Some servers answer overload or model errors with HTTP 200 and no choices.
+    const message = res.choices?.[0]?.message;
+    if (!message) {
+      const detail = (res as { error?: { message?: string } }).error?.message;
+      throw new Error(`LLM response contained no message${detail ? `: ${detail}` : ''}`);
+    }
     return message;
   };
 

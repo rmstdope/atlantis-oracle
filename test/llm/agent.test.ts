@@ -233,6 +233,15 @@ describe('failure recovery', () => {
     expect(String(tool!.content).length).toBeLessThan(1600);
   });
 
+  it('turns a response without choices into an error the recovery can handle', async () => {
+    const bad = { raw: { error: { message: 'model busy' } } };
+    await expect(run([bad]).promise).rejects.toThrow(
+      'LLM response contained no message: model busy',
+    );
+    const { promise } = run([callTools(['list_dir', {}]), bad, reply('Recovered.')]);
+    expect(await promise).toMatchObject({ text: 'Recovered.', recovered: true });
+  });
+
   it('fails when nothing has been researched yet', async () => {
     await expect(run([fail('boom')]).promise).rejects.toThrow('boom');
   });

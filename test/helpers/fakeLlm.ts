@@ -10,6 +10,8 @@ export interface ScriptedReply {
   toolCalls?: { name: string; args: string; id?: string }[];
   /** Makes this call fail, e.g. to simulate a timeout. */
   error?: string;
+  /** Returns this raw body instead of a normal completion (malformed server responses). */
+  raw?: unknown;
 }
 
 export function fail(message = 'Request timed out.'): ScriptedReply {
@@ -44,6 +46,7 @@ export function fakeLlm(script: ScriptedReply[]): LlmClient & {
       const next = script.shift();
       if (!next) throw new Error('fakeLlm: script exhausted');
       if (next.error) throw new Error(next.error);
+      if (next.raw !== undefined) return next.raw as ChatCompletion;
       const tool_calls: ChatCompletionMessageFunctionToolCall[] | undefined = next.toolCalls?.map(
         (c) => ({
           id: c.id ?? '',
