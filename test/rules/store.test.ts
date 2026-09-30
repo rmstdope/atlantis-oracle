@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { makeRulesBuilder, type RulesBuilder } from '../../src/rules/build.js';
+import { makeRulesBuilder, type BuiltRules, type RulesBuilder } from '../../src/rules/build.js';
 import { RulesStore } from '../../src/rules/store.js';
 import { FIXTURE_REPO, silentLogger } from '../helpers/fixture.js';
 
@@ -26,11 +26,14 @@ function fakeBuilder(variants: string[]): RulesBuilder & { calls: string[][] } {
   const calls: string[][] = [];
   const fn = (async ({ variants: requested, workDir }) => {
     calls.push(requested);
-    const out = new Map<string, string>();
+    const out = new Map<string, BuiltRules>();
     for (const v of requested.filter((r) => variants.includes(r))) {
       const file = path.join(tmp, `${v}.built.html`);
       await writeFile(file, `<h2>${v} built rules</h2><p>Built for ${path.basename(workDir)}.</p>`);
-      out.set(v, file);
+      out.set(v, {
+        html: file,
+        compendium: `@@monster\tBALR\tbalrog\t0\nbalrog [BALR], ${v} edition.\n\n`,
+      });
     }
     return out;
   }) as RulesBuilder & { calls: string[][] };
@@ -45,10 +48,20 @@ describe('RulesStore', () => {
     await store.prepare(repo('c1'));
 
     expect(store.variants).toEqual(['neworigins', 'standard']);
-    expect(store.get('neworigins')).toMatchObject({ source: 'built', commit: 'c1' });
+    expect(store.get('neworigins')).toMatchObject({
+      source: 'built',
+      commit: 'c1',
+      compendium: true,
+    });
     expect(store.get('neworigins')!.lines).toContain('## neworigins built rules');
+    expect(store.get('neworigins')!.lines).toContain('### balrog [BALR]');
+    expect(store.get('neworigins')!.headings.map((h) => h.text)).toContain('Monsters');
     // standard failed to build, so the committed snapshot is used.
-    expect(store.get('standard')).toMatchObject({ source: 'snapshot', commit: 'c1' });
+    expect(store.get('standard')).toMatchObject({
+      source: 'snapshot',
+      commit: 'c1',
+      compendium: false,
+    });
     expect(store.get('standard')!.headings.map((h) => h.text)).toContain('Tactics');
 
     // Same commit: nothing is rebuilt, even by a new store reading from disk.
@@ -61,6 +74,16 @@ describe('RulesStore', () => {
     await again.prepare(repo('c2'));
     expect(builder.calls).toHaveLength(2);
     expect(again.get('standard')!.commit).toBe('c2');
+  });
+
+  it('rebuilds cached rules written in an older format', async () => {
+    const builder = fakeBuilder(['neworigins']);
+    await new RulesStore({ dir: tmp, build: true }, silentLogger, builder).prepare(repo('c1'));
+    const metaFile = path.join(tmp, 'neworigins.md.json');
+    const meta = JSON.parse(await readFile(metaFile, 'utf8')) as Record<string, unknown>;
+    await writeFile(metaFile, JSON.stringify({ ...meta, format: 1 }));
+    await new RulesStore({ dir: tmp, build: true }, silentLogger, builder).prepare(repo('c1'));
+    expect(builder.calls).toHaveLength(2);
   });
 
   it('keeps outdated rules when no current ones can be made', async () => {
@@ -121,7 +144,9 @@ describe('makeRulesBuilder', () => {
       logger: silentLogger,
     });
     expect([...built.keys()]).toEqual(['standard']);
-    expect(await readFile(built.get('standard')!, 'utf8')).toBe(
+    // No engine objects in this fake game, so the compendium is skipped.
+    expect(built.get('standard')!.compendium).toBeUndefined();
+    expect(await readFile(built.get('standard')!.html, 'utf8')).toBe(
       '<h2>standard rules from standard/standard_intro.html</h2>\n',
     );
     // The clone itself stays clean.

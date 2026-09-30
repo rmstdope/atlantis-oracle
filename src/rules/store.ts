@@ -3,15 +3,21 @@ import path from 'node:path';
 import type { RulesConfig } from '../config.js';
 import type { Logger } from '../logger.js';
 import type { GameRepo } from '../repo/sync.js';
-import { makeRulesBuilder, type RulesBuilder } from './build.js';
+import { makeRulesBuilder, type BuiltRules, type RulesBuilder } from './build.js';
+import { compendiumToMarkdown, parseCompendium } from './compendium.js';
 import { extractHeadings, rulesHtmlToMarkdown, type Heading } from './markdown.js';
 
 export type RulesSource = 'built' | 'snapshot';
+
+/** Bump when the Markdown layout changes, so cached rules get rebuilt. */
+const FORMAT = 3;
 
 export interface RulesDoc {
   variant: string;
   commit: string;
   source: RulesSource;
+  /** Whether the engine-generated compendium is appended. */
+  compendium: boolean;
   lines: string[];
   headings: Heading[];
 }
@@ -19,6 +25,8 @@ export interface RulesDoc {
 interface Meta {
   commit: string;
   source: RulesSource;
+  compendium: boolean;
+  format: number;
 }
 
 /** Player rules per variant, as Markdown, rebuilt when the game repo's commit changes. */
@@ -56,6 +64,7 @@ export class RulesStore {
   private async load(variant: string): Promise<boolean> {
     try {
       const meta = JSON.parse(await readFile(`${this.mdPath(variant)}.json`, 'utf8')) as Meta;
+      if (meta.format !== FORMAT) return false;
       const lines = (await readFile(this.mdPath(variant), 'utf8')).split('\n');
       this.docs.set(variant, { variant, ...meta, lines, headings: extractHeadings(lines) });
       return true;
@@ -64,15 +73,23 @@ export class RulesStore {
     }
   }
 
-  private async save(variant: string, html: string, meta: Meta): Promise<void> {
-    const md = rulesHtmlToMarkdown(html);
+  private async save(
+    variant: string,
+    html: string,
+    compendium: string | undefined,
+    meta: Omit<Meta, 'compendium' | 'format'>,
+  ): Promise<void> {
+    const entries = compendium ? parseCompendium(compendium) : [];
+    let md = rulesHtmlToMarkdown(html);
+    if (entries.length > 0) md += `\n\n${compendiumToMarkdown(entries)}`;
+    const full: Meta = { ...meta, compendium: entries.length > 0, format: FORMAT };
     const file = this.mdPath(variant);
     // Write-then-rename so a concurrent reader never sees a partial file.
     await writeFile(`${file}.tmp`, md);
     await rename(`${file}.tmp`, file);
-    await writeFile(`${file}.json`, JSON.stringify(meta));
+    await writeFile(`${file}.json`, JSON.stringify(full));
     const lines = md.split('\n');
-    this.docs.set(variant, { variant, ...meta, lines, headings: extractHeadings(lines) });
+    this.docs.set(variant, { variant, ...full, lines, headings: extractHeadings(lines) });
   }
 
   private async doPrepare(repo: Pick<GameRepo, 'dir' | 'commit' | 'variants'>): Promise<void> {
@@ -81,7 +98,7 @@ export class RulesStore {
     const stale = repo.variants.filter((v) => this.docs.get(v)?.commit !== repo.commit);
     if (stale.length === 0) return;
 
-    let built = new Map<string, string>();
+    let built = new Map<string, BuiltRules>();
     if (this.cfg.build) {
       this.logger.info({ variants: stale }, 'Building rules');
       try {
@@ -97,15 +114,18 @@ export class RulesStore {
     }
 
     for (const variant of stale) {
-      const builtHtml = built.get(variant);
+      const result = built.get(variant);
       const snapshot = path.join(repo.dir, 'snapshot-tests', 'rules', `${variant}.html`);
-      for (const [file, source] of [
-        [builtHtml, 'built'],
-        [snapshot, 'snapshot'],
+      for (const [file, source, compendium] of [
+        [result?.html, 'built', result?.compendium],
+        [snapshot, 'snapshot', undefined],
       ] as const) {
         if (!file) continue;
         try {
-          await this.save(variant, await readFile(file, 'utf8'), { commit: repo.commit, source });
+          await this.save(variant, await readFile(file, 'utf8'), compendium, {
+            commit: repo.commit,
+            source,
+          });
           break;
         } catch {
           // Try the next source.
@@ -120,7 +140,12 @@ export class RulesStore {
       }
     }
     this.logger.info(
-      { rules: this.variants.map((v) => `${v}:${this.docs.get(v)!.source}`) },
+      {
+        rules: this.variants.map((v) => {
+          const d = this.docs.get(v)!;
+          return `${v}:${d.source}${d.compendium ? '+compendium' : ''}`;
+        }),
+      },
       'Rules ready',
     );
   }
