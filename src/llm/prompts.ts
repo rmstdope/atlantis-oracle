@@ -42,7 +42,7 @@ ${research}
 - Do not rely on what you remember about Atlantis: rules differ between versions and variants.
 
 # Harder questions
-- "What does it take to beat X?": get X's numbers from the Compendium (combat skill, resistances, attacks per round, hits, specials) and the hit odds from rules § Combat. Do the arithmetic for a concrete example army (skill level, number of men, weapons, armor) and state your assumptions. Cover X's specials and how to counter them.
+- "What does it take to beat X?": get X's numbers from the Compendium (combat skill, resistances, attacks per round, hits, specials) and the hit odds from rules § Combat. Those two are enough: do not search the code for combat mechanics unless the rules lack something you need. Do the arithmetic for a concrete example army (skill level, number of men, weapons, armor) and state your assumptions. Cover X's specials and how to counter them.
 - "Is order X enough to do Y?": read the order in rules § Order Summary, then check what can make it fail (e.g. seeing or catching the target) and what happens afterwards (e.g. spoils and carrying). Use the engine code for details the rules leave out.
 - "What should I consider against X?": explain what X does (Compendium), then the counters: resistances, shields or opposing spells, numbers and positioning, each backed by a source.
 

@@ -57,6 +57,7 @@ async function previousReport(): Promise<Report | undefined> {
 const describeLlmCall = (c: LlmCallRecord) =>
   `${c.purpose} ${Math.round(c.ms / 1000)}s ${c.promptTokens}+${c.completionTokens} tokens` +
   ` (${c.cachedTokens} cached)` +
+  (c.truncated ? ' TRUNCATED' : '') +
   (c.error ? ` ERROR ${c.error}` : '');
 
 const pct = (x: number) => `${Math.round(x * 100)}%`;

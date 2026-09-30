@@ -24,6 +24,8 @@ export interface LlmCallRecord {
   /** Prompt tokens the server reused from its cache; low values on big prompts mean slow calls. */
   cachedTokens: number;
   completionTokens: number;
+  /** The reply hit max_tokens and was cut off. */
+  truncated?: boolean;
   error?: string;
 }
 
@@ -49,6 +51,8 @@ export interface AgentOptions {
   model: string;
   temperature: number;
   topP?: number;
+  /** Output cap per LLM call; stops runaway generations (e.g. looping reasoning). */
+  maxTokens?: number;
   maxIterations: number;
   /** System prompt plus conversation so far, ending with the user's question. */
   messages: ChatCompletionMessageParam[];
@@ -90,6 +94,12 @@ const RULES_FIRST_PROMPT =
   'Before answering, look the question up in the game rules with the rules tools. ' +
   'If the rules do not settle it, you can research the code afterwards.';
 
+/** When this many research rounds remain, tool results remind the model to conclude. */
+const BUDGET_WARNING_ROUNDS = 4;
+
+const TRUNCATED_PROMPT =
+  'Your last reply was cut off because it was too long. Answer now, concisely, from what you have found.';
+
 /** Tool outputs are cut to this length when recovering from a failed call. */
 const RECOVERY_TOOL_CHARS = 1500;
 
@@ -119,6 +129,7 @@ export function stripThinking(text: string): string {
   return text
     .replace(/<think>[\s\S]*?<\/think>/g, '')
     .replace(/^[\s\S]*?<\/think>/, '') // opening tag supplied by the chat template
+    .replace(/<think>[\s\S]*$/, '') // reasoning cut off before its closing tag
     .trim();
 }
 
@@ -149,6 +160,7 @@ export async function answerQuestion(opts: AgentOptions): Promise<AgentResult> {
           messages,
           temperature: opts.temperature,
           ...(opts.topP !== undefined ? { top_p: opts.topP } : {}),
+          ...(opts.maxTokens !== undefined ? { max_tokens: opts.maxTokens } : {}),
           ...(withTools
             ? { tools: unlocked ? allTools : firstOnly, tool_choice: 'auto' as const }
             : {}),
@@ -172,6 +184,7 @@ export async function answerQuestion(opts: AgentOptions): Promise<AgentResult> {
       promptTokens: res.usage?.prompt_tokens ?? 0,
       cachedTokens: res.usage?.prompt_tokens_details?.cached_tokens ?? 0,
       completionTokens: res.usage?.completion_tokens ?? 0,
+      ...(res.choices?.[0]?.finish_reason === 'length' ? { truncated: true } : {}),
     });
     usage.promptTokens += res.usage?.prompt_tokens ?? 0;
     usage.completionTokens += res.usage?.completion_tokens ?? 0;
@@ -253,6 +266,7 @@ export async function answerQuestion(opts: AgentOptions): Promise<AgentResult> {
 
   /** The tool loop: returns the model's answer once it stops calling tools. */
   const research = async (maxRounds: number): Promise<string> => {
+    let cutOff = false;
     for (let round = 1; round <= maxRounds; round++) {
       iterations++;
       let message;
@@ -273,6 +287,13 @@ export async function answerQuestion(opts: AgentOptions): Promise<AgentResult> {
         .map((c) => ({ ...c, id: c.id || `call_${randomUUID()}` }));
 
       if (calls.length === 0) {
+        const content = stripThinking(message.content ?? '');
+        if (!content && llmCalls.at(-1)?.truncated && !cutOff) {
+          // The reply ran out of tokens before any answer (e.g. endless reasoning); ask once more.
+          cutOff = true;
+          messages.push({ role: 'user', content: TRUNCATED_PROMPT });
+          continue;
+        }
         if (!unlocked && !nudged) {
           // The model tried to answer from memory; ask it once to check the rules.
           nudged = true;
@@ -280,11 +301,17 @@ export async function answerQuestion(opts: AgentOptions): Promise<AgentResult> {
           messages.push({ role: 'user', content: RULES_FIRST_PROMPT });
           continue;
         }
-        return stripThinking(message.content ?? '');
+        return content;
       }
 
       messages.push({ role: 'assistant', content: message.content || null, tool_calls: calls });
       for (const call of calls) await runCall(call);
+
+      const remaining = maxRounds - round;
+      const last = messages.at(-1);
+      if (remaining > 0 && remaining <= BUDGET_WARNING_ROUNDS && last?.role === 'tool') {
+        last.content += `\n\n[Research round ${round} of ${maxRounds}: ${remaining} left. Start concluding and answer soon.]`;
+      }
     }
 
     hitIterationCap = true;

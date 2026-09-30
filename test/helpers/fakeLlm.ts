@@ -12,6 +12,8 @@ export interface ScriptedReply {
   error?: string;
   /** Returns this raw body instead of a normal completion (malformed server responses). */
   raw?: unknown;
+  /** Reports finish_reason "length", as when max_tokens cut the reply off. */
+  truncated?: boolean;
 }
 
 export function fail(message = 'Request timed out.'): ScriptedReply {
@@ -62,7 +64,7 @@ export function fakeLlm(script: ScriptedReply[]): LlmClient & {
         choices: [
           {
             index: 0,
-            finish_reason: tool_calls ? 'tool_calls' : 'stop',
+            finish_reason: next.truncated ? 'length' : tool_calls ? 'tool_calls' : 'stop',
             logprobs: null,
             message: {
               role: 'assistant',

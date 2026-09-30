@@ -300,6 +300,46 @@ describe('diagnostics', () => {
   });
 });
 
+describe('runaway generations and round budget', () => {
+  it('sends max_tokens and asks again once when a reply is cut off empty', async () => {
+    const { llm, promise } = run(
+      [{ content: '<think>loooong', truncated: true }, reply('Short answer.')],
+      { maxTokens: 4096 },
+    );
+    const r = await promise;
+    expect(r.text).toBe('Short answer.');
+    expect(llm.requests[0]!.max_tokens).toBe(4096);
+    expect(llm.requests[1]!.messages.at(-1)).toMatchObject({
+      role: 'user',
+      content: expect.stringMatching(/cut off/),
+    });
+    expect(r.llmCalls[0]!.truncated).toBe(true);
+  });
+
+  it('keeps a cut-off reply that has content', async () => {
+    const { promise } = run([{ content: 'Partial but useful', truncated: true }]);
+    expect((await promise).text).toBe('Partial but useful');
+  });
+
+  it('warns the model when few research rounds remain', async () => {
+    const calls = Array.from({ length: 6 }, (_, i) =>
+      callTools(['list_dir', { path: i % 2 ? 'standard' : 'neworigins' }]),
+    );
+    const { llm, promise } = run([...calls, reply('done')], { maxIterations: 6 });
+    await promise;
+    const tools = llm.requests
+      .at(-1)!
+      .messages.filter((m) => m.role === 'tool')
+      .map((m) => String(m.content));
+    expect(tools[0]).not.toMatch(/Research round/);
+    expect(tools[1]).toMatch(
+      /\[Research round 2 of 6: 4 left\. Start concluding and answer soon\.\]$/,
+    );
+    expect(tools[4]).toMatch(/Research round 5 of 6: 1 left/);
+    expect(tools[5]).not.toMatch(/Research round/);
+  });
+});
+
 describe('loop guard', () => {
   it('answers repeated calls with a pointer to the earlier step', async () => {
     const { llm, promise } = run([
@@ -420,5 +460,7 @@ describe('stripThinking', () => {
   it('handles a missing opening tag', () => {
     expect(stripThinking('reasoning here</think>\n\nThe answer')).toBe('The answer');
     expect(stripThinking('a <think>x</think> b <think>y</think> c')).toBe('a  b  c');
+    expect(stripThinking('Answer.\n<think>cut off mid-reasoning')).toBe('Answer.');
+    expect(stripThinking('<think>never closed')).toBe('');
   });
 });

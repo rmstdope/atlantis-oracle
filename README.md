@@ -184,6 +184,7 @@ All configuration is done with environment variables, read from `.env` in develo
 | `LLM_MAX_TOOL_ITERATIONS` | no | `16` | Maximum tool-call rounds per question |
 | `LLM_REQUEST_TIMEOUT_SECONDS` | no | `120` | Timeout for each LLM request |
 | `LLM_MAX_RETRIES` | no | `2` | Retries per LLM request, timeouts included. Use `0` for local servers, where a timed-out request usually times out again. |
+| `LLM_MAX_TOKENS` | no | `4096` | Output cap per LLM request (`max_tokens`). Stops a looping model from blocking a question; a reply cut off before any answer gets one retry. |
 | `LLM_TOOL_OUTPUT_BUDGET` | no | `60000` | Total characters of tool output per question; protects the model's context window |
 | `LLM_PLAN_STEP` | no | `true` | Ask the model for a research plan before it starts looking things up |
 | `LLM_REVIEW_STEP` | no | `true` | Let the model check its draft answer against what it found, and research once more if something is missing |

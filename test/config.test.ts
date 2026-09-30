@@ -15,6 +15,7 @@ describe('loadConfig', () => {
     expect(c.llm.planStep).toBe(true);
     expect(c.llm.topP).toBeUndefined();
     expect(c.llm.maxRetries).toBe(2);
+    expect(c.llm.maxTokens).toBe(4096);
     expect(c.llm.toolOutputBudget).toBe(60000);
     expect(c.llm.reviewStep).toBe(true);
     expect(c.repo.url).toBe('https://github.com/Atlantis-PBEM/Atlantis.git');

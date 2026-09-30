@@ -138,7 +138,12 @@ test/                   mirrors src/; helpers/ has the fixture path and a script
    60k characters) to protect small context windows. If an LLM call fails
    mid-research (e.g. a timeout on a huge context), the agent shortens the tool
    results and forces an answer from them instead of failing the question. A
-   failed plan or review call is skipped. A call that repeats an earlier successful one (same tool and
+   failed plan or review call is skipped. Every call sends `max_tokens`
+   (`LLM_MAX_TOKENS`); a research reply cut off before any answer gets one
+   "answer concisely" retry. When 4 or fewer research rounds remain, the last
+   tool result of each round tells the model how many are left.
+   Each LLM call is recorded (`llmCalls`: purpose, time, prompt/cached/completion
+   tokens, truncation, error); failures throw `AgentError` with the partial record. A call that repeats an earlier successful one (same tool and
    arguments, or a `read_file`/`read_rules` range inside an earlier read) gets a
    short "already shown in step N" note instead, which costs no budget.
 4. While the agent works, `handlers.ts` keeps a progress message up to date

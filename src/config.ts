@@ -34,6 +34,7 @@ const envSchema = z.object({
   LLM_MAX_TOOL_ITERATIONS: withDefault(z.coerce.number().int().min(1).max(50), 16),
   LLM_REQUEST_TIMEOUT_SECONDS: withDefault(z.coerce.number().int().positive(), 120),
   LLM_MAX_RETRIES: withDefault(z.coerce.number().int().min(0).max(10), 2),
+  LLM_MAX_TOKENS: withDefault(z.coerce.number().int().positive(), 4096),
   LLM_TOOL_OUTPUT_BUDGET: withDefault(z.coerce.number().int().positive(), 60000),
   LLM_MAX_CONCURRENT: withDefault(z.coerce.number().int().positive(), 1),
   LLM_PLAN_STEP: withDefault(z.stringbool(), 'true'),
@@ -62,6 +63,8 @@ export interface LlmConfig {
   requestTimeoutMs: number;
   /** SDK retries per request (timeouts included). */
   maxRetries: number;
+  /** Output cap per request (max_tokens). */
+  maxTokens: number;
   /** Total characters of tool output per question. */
   toolOutputBudget: number;
   maxConcurrent: number;
@@ -122,6 +125,7 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
       maxToolIterations: e.LLM_MAX_TOOL_ITERATIONS,
       requestTimeoutMs: e.LLM_REQUEST_TIMEOUT_SECONDS * 1000,
       maxRetries: e.LLM_MAX_RETRIES,
+      maxTokens: e.LLM_MAX_TOKENS,
       toolOutputBudget: e.LLM_TOOL_OUTPUT_BUDGET,
       maxConcurrent: e.LLM_MAX_CONCURRENT,
       planStep: e.LLM_PLAN_STEP,
