@@ -4,6 +4,7 @@ import type {
   ChatCompletionMessageParam,
 } from 'openai/resources/chat/completions';
 import { runTool, toOpenAITools, type Tool, type ToolContext } from '../tools/index.js';
+import { CallMemory, repeatNote } from './callMemory.js';
 import type { LlmClient } from './client.js';
 
 export interface ToolCallRecord {
@@ -11,6 +12,8 @@ export interface ToolCallRecord {
   args: string;
   ok: boolean;
   ms: number;
+  /** True when the call repeated an earlier one and got a pointer instead of output. */
+  repeat?: boolean;
 }
 
 export interface AgentResult {
@@ -71,6 +74,7 @@ export async function answerQuestion(opts: AgentOptions): Promise<AgentResult> {
   const toolCalls: ToolCallRecord[] = [];
   const usage = { promptTokens: 0, completionTokens: 0, cachedTokens: 0 };
   let budget = opts.toolOutputBudget ?? 60_000;
+  const memory = new CallMemory();
 
   const complete = async (withTools: boolean) => {
     const res = await opts.llm.complete(
@@ -132,6 +136,22 @@ export async function answerQuestion(opts: AgentOptions): Promise<AgentResult> {
       const started = Date.now();
       let output: string;
       let ok: boolean;
+      const earlier = memory.earlier(call.function.name, call.function.arguments);
+      if (earlier !== undefined) {
+        toolCalls.push({
+          name: call.function.name,
+          args: call.function.arguments,
+          ok: true,
+          ms: 0,
+          repeat: true,
+        });
+        messages.push({
+          role: 'tool',
+          tool_call_id: call.id,
+          content: repeatNote(call.function.name, earlier),
+        });
+        continue;
+      }
       if (budget <= 0) {
         output = 'Error: research budget exhausted. Answer with what you have.';
         ok = false;
@@ -148,6 +168,7 @@ export async function answerQuestion(opts: AgentOptions): Promise<AgentResult> {
         budget -= output.length;
       }
       if (ok && first.has(call.function.name)) unlocked = true;
+      if (ok) memory.remember(call.function.name, call.function.arguments, toolCalls.length + 1);
       toolCalls.push({
         name: call.function.name,
         args: call.function.arguments,

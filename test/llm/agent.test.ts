@@ -118,7 +118,7 @@ describe('answerQuestion', () => {
 
   it('stops running tools once the output budget is spent', async () => {
     const { llm, promise } = run(
-      [callTools(['list_dir', {}]), callTools(['list_dir', {}]), reply('ok')],
+      [callTools(['list_dir', {}]), callTools(['list_dir', { path: 'standard' }]), reply('ok')],
       { toolOutputBudget: 10 },
     );
     const r = await promise;
@@ -135,6 +135,46 @@ describe('answerQuestion', () => {
 
   it('propagates LLM failures', async () => {
     await expect(run([]).promise).rejects.toThrow(/script exhausted/);
+  });
+});
+
+describe('loop guard', () => {
+  it('answers repeated calls with a pointer to the earlier step', async () => {
+    const { llm, promise } = run([
+      callTools(['read_file', { path: 'standard/rules.cpp', start_line: 1, end_line: 11 }]),
+      callTools(
+        ['read_file', { path: 'standard/rules.cpp', start_line: 4, end_line: 5 }],
+        ['list_dir', {}],
+      ),
+      callTools(['list_dir', {}]),
+      reply('done'),
+    ]);
+    const r = await promise;
+    expect(r.toolCalls.map((c) => [c.name, !!c.repeat])).toEqual([
+      ['read_file', false],
+      ['read_file', true],
+      ['list_dir', false],
+      ['list_dir', true],
+    ]);
+    const tools = llm.requests[3]!.messages.filter((m) => m.role === 'tool').map((m) =>
+      String(m.content),
+    );
+    expect(tools[1]).toBe(
+      'Already shown: this read_file request is covered by the result of step 1. Use that result instead of requesting it again, or ask for something new.',
+    );
+    expect(tools[3]).toMatch(/covered by the result of step 3/);
+  });
+
+  it('does not remember failed calls', async () => {
+    const { promise } = run([
+      callTools(['read_file', { path: 'nope.cpp' }]),
+      callTools(['read_file', { path: 'nope.cpp' }]),
+      reply('done'),
+    ]);
+    expect((await promise).toolCalls.map((c) => [c.ok, !!c.repeat])).toEqual([
+      [false, false],
+      [false, false],
+    ]);
   });
 });
 

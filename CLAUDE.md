@@ -77,6 +77,7 @@ src/
     agent.ts            tool-calling loop (the core of the bot)
     limiter.ts          FIFO semaphore for LLM_MAX_CONCURRENT
     glossary.ts         finds all-caps game abbreviations (SSTO, BALR) in the question
+    callMemory.ts       loop guard: detects repeated tool calls and re-reads of covered ranges
     prompts.ts          system prompt + Atlantis codebase hints
   repo/
     sync.ts             GameRepo: clone, fetch + hard reset, commit, variant discovery
@@ -129,7 +130,9 @@ test/                   mirrors src/; helpers/ has the fixture path and a script
    is hit, it makes one last call without tools to force an answer from what
    has been gathered.
    Total tool output per question is capped (60k characters) to protect small
-   context windows.
+   context windows. A call that repeats an earlier successful one (same tool and
+   arguments, or a `read_file`/`read_rules` range inside an earlier read) gets a
+   short "already shown in step N" note instead, which costs no budget.
 4. While the agent works, `handlers.ts` keeps a progress message up to date
    (throttled to one edit per 3s; the steps are described by
    `format.describeToolCall`) and deletes it when the answer is posted. The
