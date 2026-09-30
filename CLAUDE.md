@@ -15,8 +15,10 @@ The LLM backend must stay swappable: hosted OpenAI, or a local server such as
 Ollama, llama.cpp, vLLM or LM Studio. This is a core requirement, not an extra
 (see "LLM portability" below).
 
-Status: early development. The layout below is the target structure. If the
-code differs from it, update this file in the same change.
+Status: MVP. `/ask`, thread follow-ups and `/oracle-info` work. Planned next:
+@mention entry point, Docker image, an evals harness, and turning `path:line`
+citations into GitHub links. Keep this file in sync with the code: if a change
+alters the layout or conventions below, update this file in the same change.
 
 ## Tech stack
 
@@ -28,7 +30,8 @@ code differs from it, update this file in the same change.
 - `zod` to validate configuration and tool arguments
 - `pino` for structured logging
 - `vitest` for tests, `eslint` + `prettier` for linting and formatting
-- External binaries: `git` (repo sync) and `rg` (ripgrep, for code search)
+- `git` on the PATH for repo sync. ripgrep comes bundled via `@vscode/ripgrep`
+  (use its `rgPath`, not a system `rg`).
 
 ## Commands
 
@@ -38,63 +41,77 @@ npm run dev                 # tsx watch src/index.ts
 npm run build               # tsc -> dist/
 npm start                   # node dist/index.js
 npm test                    # vitest run
-npm test -- src/tools       # run a subset
+npm test -- test/tools      # run a subset
 npm run lint                # eslint .
+npm run format              # prettier --write . (markdown is excluded)
 npm run typecheck           # tsc --noEmit
 npm run register-commands   # push slash command definitions to Discord
-npm run ask -- "question"   # CLI: run the agent without Discord (for dev and evals)
+npm run ask -- [--variant x] [--no-sync] "question"   # agent without Discord
 ```
 
-Before calling a task done, run `npm run typecheck && npm run lint && npm test`.
+Before calling a task done, run `npm run typecheck && npm run lint && npm test`
+and `npx prettier --check .`.
 
 ## Architecture
 
 ```
 src/
   index.ts              entry: load config, sync repo, start Discord client
+  cli.ts                `npm run ask`
   config.ts             zod schema for all env vars; the only place process.env is read
   logger.ts
+  oracle.ts             Oracle: system prompt + agent + concurrency limit; used by CLI and Discord
   discord/
-    client.ts           discord.js client setup, intents, event wiring
+    client.ts           discord.js client (intents, allowedMentions: none)
     commands.ts         slash command definitions (/ask, /oracle-info)
     register.ts         script behind `npm run register-commands`
-    handlers.ts         turns interactions/mentions/thread replies into agent calls
-    format.ts           splits long answers at 2000 chars, formats source refs
-    rateLimit.ts        per-user limiter
+    handlers.ts         /ask, /oracle-info and thread follow-ups -> Oracle
+    format.ts           message splitting, footer, question header, thread name <-> variant
+    history.ts          rebuilds conversation turns from a Discord thread
+    rateLimit.ts        per-user sliding window
   llm/
-    client.ts           OpenAI SDK instance built from config
+    client.ts           LlmClient interface + OpenAI SDK implementation
     agent.ts            tool-calling loop (the core of the bot)
+    limiter.ts          FIFO semaphore for LLM_MAX_CONCURRENT
     prompts.ts          system prompt + Atlantis codebase hints
-    history.ts          rebuilds conversation context from a Discord thread
   repo/
-    sync.ts             clone on start, periodic `git pull`, exposes current commit
+    sync.ts             GameRepo: clone, fetch + hard reset, commit, variant discovery
     paths.ts            resolves and sandboxes paths inside GAME_REPO_DIR
   tools/
-    index.ts            tool registry: name -> { zod schema, JSON schema, handler }
+    index.ts            registry, OpenAI tool schemas (z.toJSONSchema), runTool
+    types.ts            Tool, ToolError, truncate
     searchCode.ts       ripgrep wrapper
     readFile.ts         read a line range
     listDir.ts
-    findDefinition.ts   looks up an item/skill/object entry by name or tag in gamedata tables
-  cli.ts                `npm run ask`
-test/                   vitest tests; fixtures/ holds a tiny fake game repo
+    gamedata.ts         parser for gamedata.cpp tables and gamedata.h enums
+    findDefinition.ts   looks up a table entry by name, abbreviation or enum constant
+test/                   mirrors src/; helpers/ has the fixture path and a scripted fake LLM,
+                        fixtures/game-repo/ is a tiny fake Atlantis repo
 ```
 
 ### Request flow
 
-1. `discord/handlers.ts` receives `/ask`, an @mention, or a reply in a bot-owned
-   thread. It checks the channel allowlist and the rate limit, calls
+1. `discord/handlers.ts` receives `/ask` or a message in a bot-owned thread. It
+   checks the channel allowlist and the rate limit. For `/ask` it calls
    `deferReply()` right away (Discord gives only 3 seconds before the interaction
-   expires), and creates or reuses a thread.
-2. `llm/history.ts` builds the message list: system prompt, prior turns from the
-   thread, and the new question, including the selected game variant.
+   expires), edits the reply into a question header and starts a thread from it.
+   The thread name ends in ` · <variant>`, so follow-ups need no stored state.
+2. For follow-ups, `discord/history.ts` rebuilds the turns from the thread's
+   starter message and its last 20 messages. `oracle.ts` adds the system prompt
+   (repo, commit, selected variant) and takes an `LLM_MAX_CONCURRENT` slot.
 3. `llm/agent.ts` runs the loop: it calls the model with `tools`, runs any
    requested tool calls, appends the results, and repeats until the model
    returns a final answer or `LLM_MAX_TOOL_ITERATIONS` is reached. When the cap
    is hit, it makes one last call without tools to force an answer from what
    has been gathered.
-4. `discord/format.ts` posts the answer, split into several messages if needed.
+   Total tool output per question is capped (60k characters) to protect small
+   context windows.
+4. `handlers.ts` posts the answer, split by `format.ts` into several messages if
+   needed, with a `-#` footer (model, variant, repo@commit). `history.ts` strips
+   the footer when it rebuilds context.
 
-`llm/agent.ts` must not depend on Discord. `cli.ts` and the tests drive it directly.
+`oracle.ts` and everything under `llm/`, `tools/` and `repo/` must not depend on
+Discord. `cli.ts` and the tests drive them directly.
 
 ## Tools exposed to the LLM
 
@@ -105,9 +122,9 @@ it), and a handler that returns **plain text**.
 | Tool | Purpose |
 |---|---|
 | `search_code` | ripgrep for a regex/literal, optional path glob; returns `path:line: text` with limited context |
-| `read_file` | read `path` from `start_line` to `end_line` (max ~300 lines per call) |
+| `read_file` | read `path` from `start_line` to `end_line` (default 150, max 300 lines per call) |
 | `list_dir` | list a directory within the repo |
-| `find_definition` | find the entry for an item, skill, object, terrain, etc. in `gamedata.cpp`, by name or tag (e.g. `TACT`, `plate armor`) |
+| `find_definition` | find the entry for an item, skill, object, terrain, etc. in `gamedata.cpp`, by name, tag or enum (e.g. `TACT`, `plate armor`, `I_PLATEARMOR`). Returns the field legend and the `gamedata.h` enum constant, so the model can look for variant changes in `extra.cpp` |
 
 Rules for tools:
 
@@ -154,6 +171,8 @@ Upstream layout, verified against Atlantis-PBEM/Atlantis `main`:
   variant are `gamedata.cpp` + these modifications.**
 - `<variant>/world.cpp`, `map.cpp`, `monsters.cpp` handle world generation and monsters.
 - Variants: `basic`, `standard`, `fracas`, `havilah`, `kingdoms`, `neworigins`.
+  `unittest/` also has a `rules.cpp` but is a test harness; `discoverVariants`
+  skips directories whose name contains "test".
 - Engine logic (how orders resolve): `parseorders.cpp`, `runorders.cpp`,
   `monthorders.cpp`, `battle.cpp`, `army.cpp`, `economy.cpp`, `production.cpp`,
   `market.cpp`, `spells.cpp`, `specials.cpp`, `unit.cpp`, `faction.cpp`.

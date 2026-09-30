@@ -18,8 +18,9 @@ The bot searches the configured Atlantis repository, reads the relevant code and
 rules text, and writes a player-friendly answer with references to the files it
 used.
 
-> **Status:** early development. See [CLAUDE.md](CLAUDE.md) for the planned
-> architecture and project conventions.
+> **Status:** MVP. `/ask`, follow-up questions in answer threads, and
+> `/oracle-info` work. @mentions and a Docker image are planned. See
+> [CLAUDE.md](CLAUDE.md) for the architecture and project conventions.
 
 ## How it works
 
@@ -28,19 +29,20 @@ Discord user ──/ask──▶ Bot ──▶ LLM (OpenAI-compatible API)
                                  │   ▲
                      tool calls  │   │ tool results
                                  ▼   │
-                         Repo tools (search / read / list)
+          Repo tools (search / read / list / find definition)
                                  │
                                  ▼
                     Local clone of the Atlantis repo
 ```
 
-1. A player asks a question with `/ask` or by mentioning the bot.
+1. A player asks a question with `/ask`.
 2. The bot sends the question to an LLM along with a set of **tools** that let
    it search and read the local clone of the game repository.
 3. The LLM decides what to look up: grepping for an item or skill name, reading
    `gamedata.cpp` tables, checking a game variant's `rules.cpp`, reading the
    generated rules HTML, and so on. It keeps going until it has enough to answer.
-4. The bot posts the answer, with source references, in a thread.
+4. The bot posts the answer, with source references, in a new thread. Players
+   can ask follow-up questions by replying in the thread.
 
 The retrieval is *agentic* (the model calls tools) rather than based on
 embeddings. The Atlantis game data mostly lives in large C++ tables where exact
@@ -54,15 +56,16 @@ The Atlantis repo contains several game variants (`standard`, `basic`,
 `fracas`, `havilah`, `kingdoms`, `neworigins`). They share the engine and the
 base data in `gamedata.cpp`. Each variant sets its own game constants in
 `<variant>/rules.cpp` and enables, disables or modifies items, skills and
-objects in `<variant>/extra.cpp`. The bot takes this into account. It uses a configurable
-default variant, and players can name another one in the question or with the
-`variant` option on `/ask`.
+objects in `<variant>/extra.cpp`. The bot takes this into account. It uses a
+configurable default variant, and players can pick another one with the
+`variant` option on `/ask` (or name it in the question). The bot finds the
+variants itself: every top-level directory with a `rules.cpp`, except test
+directories.
 
 ## Requirements
 
 - Node.js 22 or newer
 - `git` on the `PATH` (used to clone and update the game repository)
-- [ripgrep](https://github.com/BurntSushi/ripgrep) (`rg`) on the `PATH` (used for code search)
 - A Discord application with a bot token
 - An OpenAI-compatible chat-completions endpoint **with tool/function-calling
   support**, for example:
@@ -73,7 +76,10 @@ default variant, and players can name another one in the question or with the
 
 Answer quality depends heavily on the model's ability to use tools and read
 C++. For local setups, pick a model that is known to handle tool calling well
-and has a context window of at least 32k tokens.
+and has a context window of at least 32k tokens. Ollama's default context
+window is much smaller, and it can't be changed through the OpenAI-compatible
+API. Start the server with `OLLAMA_CONTEXT_LENGTH=32768 ollama serve`, or create a
+model variant with a larger `num_ctx`.
 
 ## Setup
 
@@ -82,8 +88,8 @@ and has a context window of at least 32k tokens.
 1. Go to the [Discord Developer Portal](https://discord.com/developers/applications)
    and create a new application.
 2. Under **Bot**, create a bot and copy its token.
-3. Under **Bot → Privileged Gateway Intents**, enable **Message Content Intent**
-   if you want the bot to answer @mentions. `/ask` works without it.
+3. Under **Bot → Privileged Gateway Intents**, enable **Message Content Intent**.
+   The bot needs it to read follow-up questions in its answer threads.
 4. Under **OAuth2 → URL Generator**, select the scopes `bot` and
    `applications.commands`, and the permissions *Send Messages*,
    *Send Messages in Threads*, *Create Public Threads* and *Read Message History*.
@@ -111,15 +117,20 @@ npm run build && npm start  # production
 On first start the bot clones the game repository into `GAME_REPO_DIR`. After
 that it runs `git pull` on the interval set by `GAME_REPO_SYNC_INTERVAL_MINUTES`.
 
-### Docker
+The bot owns `GAME_REPO_DIR`: each sync hard-resets it to the remote and
+discards local changes. Don't point it at a working copy you edit.
+
+### Trying it without Discord
+
+`npm run ask` runs the same research-and-answer loop in the terminal and
+shows each tool call the model makes. It only needs the LLM and game repo
+settings, so it's the quickest way to check that a model works well:
 
 ```sh
-docker build -t atlantis-oracle .
-docker run --env-file .env -v atlantis-data:/data atlantis-oracle
+npm run ask -- "What does the TACTICS skill do?"
+npm run ask -- --variant neworigins "How many mages can a faction have?"
+npm run ask -- --no-sync "..."   # skip git fetch, use the existing clone
 ```
-
-If the LLM runs on the Docker host (for example Ollama), set
-`OPENAI_BASE_URL=http://host.docker.internal:11434/v1`.
 
 ## Configuration
 
@@ -137,6 +148,7 @@ All configuration is done with environment variables, read from `.env` in develo
 | `LLM_TEMPERATURE` | no | `0.2` | Sampling temperature |
 | `LLM_MAX_TOOL_ITERATIONS` | no | `12` | Maximum tool-call rounds per question |
 | `LLM_REQUEST_TIMEOUT_SECONDS` | no | `120` | Timeout for each LLM request |
+| `LLM_MAX_CONCURRENT` | no | `1` | Questions researched at the same time; others wait in a queue. Keep at 1 for most local servers. |
 | `GAME_REPO_URL` | no | `https://github.com/Atlantis-PBEM/Atlantis.git` | Game repository to answer from |
 | `GAME_REPO_BRANCH` | no | *(remote default)* | Branch or tag to check out |
 | `GAME_REPO_DIR` | no | `./data/game-repo` | Where the repository is cloned |
@@ -157,10 +169,9 @@ need adjustments in `src/llm/prompts.ts`.
 
 | Command | Description |
 |---|---|
-| `/ask question:<text> [variant:<name>]` | Ask a question. The answer is posted in a new thread. |
-| `@atlantis-oracle <question>` | Same as `/ask`, via mention |
-| Reply in the thread | Ask a follow-up. The bot keeps the thread's conversation as context. |
-| `/oracle-info` | Show the repository, commit and model currently in use |
+| `/ask question:<text> [variant:<name>]` | Ask a question. The answer is posted in a new thread. Used inside a thread, the bot answers in that thread. |
+| Message in an answer thread | Ask a follow-up. The bot uses the thread's recent conversation as context. |
+| `/oracle-info` | Show the repository, commit, variants and model currently in use (only visible to you) |
 
 The answers are generated by an LLM and **can be wrong**. The source references
 in each answer let you check the claim yourself. When in doubt, your GM's
@@ -170,6 +181,7 @@ ruling and the published rules for your game take precedence.
 
 ```sh
 npm run dev        # run with auto-reload
+npm run ask -- "…" # ask a question from the terminal
 npm test           # unit tests (vitest)
 npm run lint       # eslint
 npm run typecheck  # tsc --noEmit
