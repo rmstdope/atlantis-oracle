@@ -121,7 +121,12 @@ test/                   mirrors src/; helpers/ has the fixture path and a script
    (repo, commit, selected variant, whether rules exist, and a note that expands
    abbreviations found by `llm/glossary.ts`, e.g. `SSTO = skill "summon storm"`) and takes an
    `LLM_MAX_CONCURRENT` slot.
-3. `llm/agent.ts` runs the loop. **Rules first:** until the model has called a
+3. `llm/agent.ts` runs, in order: an optional **plan** call without tools
+   (`LLM_PLAN_STEP`: the model lists the facts it needs and where to find them),
+   the research loop, and an optional **review** call without tools
+   (`LLM_REVIEW_STEP`: the model checks the draft against the tool results and
+   replies `APPROVED`, a revised answer, or `RESEARCH: …`, which buys one more
+   research loop of up to 6 rounds). In the research loop, **rules first:** until the model has called a
    rules tool (`firstTools`), only the rules tools are offered. Code tool calls
    are refused, and an answer without any lookup gets one reminder. After that,
    all tools are offered. Otherwise the loop calls the model with `tools`, runs any

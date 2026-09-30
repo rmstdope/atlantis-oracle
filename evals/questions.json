@@ -28,8 +28,11 @@
     "variant": "standard",
     "question": "What should I consider when defending against an army with SSTO?",
     "mustMention": ["summon storm", "weather", "(-|−|minus )2", "(100|level)"],
-    "mustNotMention": [],
-    "notes": "SSTO = summon storm (Weather Lore spell). Engine description: between 2 and 100 times the mage's skill level weather attacks; each hit gives the target storm (-2 attack, -2 versus melee) for the rest of the battle; it doesn't target units already affected. Defense: resistance/shields against weather attacks, armor saves vs weather, the attacker's mage count and level."
+    "mustNotMention": [
+      "(no|not deal any|without) direct damage",
+      "ranged[^.]{0,40}(unaffected|not affected)"
+    ],
+    "notes": "SSTO = summon storm (Weather Lore spell). Engine description: between 2 and 100 times the mage's skill level weather attacks; each hit gives the target storm (-2 attack, -2 versus melee) for the rest of the battle; it doesn't target units already affected. Defense: resistance/shields against weather attacks, armor saves vs weather, the attacker's mage count and level. Baseline (local Qwen, before compendium) wrongly claimed 'no direct damage' and 'ranged troops are unaffected'."
   },
   {
     "id": "study-comb3",

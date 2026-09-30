@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import {
   answerQuestion,
   FALLBACK_ANSWER,
+  PLAN_PROMPT,
+  REVIEW_PROMPT,
   stripThinking,
   type AgentOptions,
 } from '../../src/llm/agent.js';
@@ -135,6 +137,77 @@ describe('answerQuestion', () => {
 
   it('propagates LLM failures', async () => {
     await expect(run([]).promise).rejects.toThrow(/script exhausted/);
+  });
+});
+
+describe('plan and review steps', () => {
+  const phases: string[] = [];
+  const onPhase = (p: string) => phases.push(p);
+
+  it('plans without tools, researches, and keeps an approved draft', async () => {
+    phases.length = 0;
+    const { llm, promise } = run(
+      [
+        reply('- cost of TACT: gamedata'),
+        callTools(['find_definition', { queries: ['TACT'] }]),
+        reply('Tactics costs 200.'),
+        reply('APPROVED'),
+      ],
+      { planStep: true, reviewStep: true, onPhase },
+    );
+    const r = await promise;
+    expect(r).toMatchObject({ text: 'Tactics costs 200.', review: 'approved', iterations: 2 });
+    expect(phases).toEqual(['planning', 'researching', 'reviewing']);
+    expect(llm.requests[0]!.tools).toBeUndefined();
+    expect(llm.requests[0]!.messages.at(-1)).toMatchObject({ role: 'user', content: PLAN_PROMPT });
+    expect(llm.requests[1]!.messages.slice(-2)).toEqual([
+      { role: 'assistant', content: '- cost of TACT: gamedata' },
+      { role: 'user', content: expect.stringMatching(/carry out the plan/) },
+    ]);
+    expect(llm.requests[1]!.tools).toHaveLength(4);
+    const review = llm.requests[3]!;
+    expect(review.tools).toBeUndefined();
+    expect(review.messages.slice(-2)).toEqual([
+      { role: 'assistant', content: 'Tactics costs 200.' },
+      { role: 'user', content: REVIEW_PROMPT },
+    ]);
+  });
+
+  it('uses a revised answer from the review', async () => {
+    const { promise } = run([reply('draft'), reply('<think>hmm</think>Better answer.')], {
+      reviewStep: true,
+    });
+    expect(await promise).toMatchObject({ text: 'Better answer.', review: 'revised' });
+  });
+
+  it('researches once more when the review finds gaps', async () => {
+    phases.length = 0;
+    const { llm, promise } = run(
+      [
+        reply('draft without numbers'),
+        reply('RESEARCH: the study cost of tactics'),
+        callTools(['find_definition', { queries: ['TACT'] }]),
+        reply('Final: 200 silver.'),
+      ],
+      { reviewStep: true, onPhase },
+    );
+    const r = await promise;
+    expect(r).toMatchObject({ text: 'Final: 200 silver.', review: 'researched', iterations: 3 });
+    expect(phases).toEqual(['researching', 'reviewing', 'researching']);
+    expect(llm.requests[2]!.messages.at(-1)).toMatchObject({
+      role: 'user',
+      content: expect.stringMatching(/^Research what is missing: the study cost of tactics/),
+    });
+    expect(llm.requests).toHaveLength(4); // no second review
+  });
+
+  it('skips an empty plan and keeps the draft when the review is empty', async () => {
+    const { llm, promise } = run([reply(''), reply('answer'), reply('')], {
+      planStep: true,
+      reviewStep: true,
+    });
+    expect(await promise).toMatchObject({ text: 'answer', review: 'approved' });
+    expect(llm.requests[1]!.messages.map((m) => m.role)).toEqual(['system', 'user']);
   });
 });
 

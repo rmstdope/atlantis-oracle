@@ -22,6 +22,7 @@ interface EvalResult extends Score {
   iterations: number;
   toolCalls: number;
   hitIterationCap: boolean;
+  review?: string;
   promptTokens: number;
   completionTokens: number;
   error?: string;
@@ -106,6 +107,7 @@ async function main(): Promise<void> {
         iterations: r.iterations,
         toolCalls: r.toolCalls.length,
         hitIterationCap: r.hitIterationCap,
+        review: r.review,
         promptTokens: r.usage.promptTokens,
         completionTokens: r.usage.completionTokens,
         ...scoreAnswer(q, r.text),
@@ -150,7 +152,7 @@ async function main(): Promise<void> {
     console.log(
       `${r.pass ? '✅' : '❌'} ${r.id.padEnd(24)} recall ${pct(r.recall)}${delta(r.recall, prev?.recall, pct)}` +
         ` · ${secs(r.ms)}${delta(r.ms, prev?.ms, secs)} · ${r.toolCalls} calls` +
-        `${r.hitIterationCap ? ' · CAP' : ''}${r.forbidden.length ? ` · FORBIDDEN ${r.forbidden.join(', ')}` : ''}` +
+        `${r.hitIterationCap ? ' · CAP' : ''}${r.review ? ` · ${r.review}` : ''}${r.forbidden.length ? ` · FORBIDDEN ${r.forbidden.join(', ')}` : ''}` +
         `${r.missing.length ? `\n     missing: ${r.missing.join(' | ')}` : ''}`,
     );
   }

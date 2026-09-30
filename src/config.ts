@@ -30,6 +30,8 @@ const envSchema = z.object({
   LLM_MAX_TOOL_ITERATIONS: withDefault(z.coerce.number().int().min(1).max(50), 16),
   LLM_REQUEST_TIMEOUT_SECONDS: withDefault(z.coerce.number().int().positive(), 120),
   LLM_MAX_CONCURRENT: withDefault(z.coerce.number().int().positive(), 1),
+  LLM_PLAN_STEP: withDefault(z.stringbool(), 'true'),
+  LLM_REVIEW_STEP: withDefault(z.stringbool(), 'true'),
 
   GAME_REPO_URL: withDefault(z.string().min(1), 'https://github.com/Atlantis-PBEM/Atlantis.git'),
   GAME_REPO_BRANCH: optionalString,
@@ -51,6 +53,10 @@ export interface LlmConfig {
   maxToolIterations: number;
   requestTimeoutMs: number;
   maxConcurrent: number;
+  /** Ask for a research plan before the tool loop. */
+  planStep: boolean;
+  /** Review the draft answer against the research before sending it. */
+  reviewStep: boolean;
 }
 
 export interface RepoConfig {
@@ -103,6 +109,8 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
       maxToolIterations: e.LLM_MAX_TOOL_ITERATIONS,
       requestTimeoutMs: e.LLM_REQUEST_TIMEOUT_SECONDS * 1000,
       maxConcurrent: e.LLM_MAX_CONCURRENT,
+      planStep: e.LLM_PLAN_STEP,
+      reviewStep: e.LLM_REVIEW_STEP,
     },
     repo: {
       url: e.GAME_REPO_URL,

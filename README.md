@@ -171,6 +171,8 @@ All configuration is done with environment variables, read from `.env` in develo
 | `LLM_TEMPERATURE` | no | `0.2` | Sampling temperature |
 | `LLM_MAX_TOOL_ITERATIONS` | no | `16` | Maximum tool-call rounds per question |
 | `LLM_REQUEST_TIMEOUT_SECONDS` | no | `120` | Timeout for each LLM request |
+| `LLM_PLAN_STEP` | no | `true` | Ask the model for a research plan before it starts looking things up |
+| `LLM_REVIEW_STEP` | no | `true` | Let the model check its draft answer against what it found, and research once more if something is missing |
 | `LLM_MAX_CONCURRENT` | no | `1` | Questions researched at the same time; others wait in a queue. Keep at 1 for most local servers. |
 | `GAME_REPO_URL` | no | `https://github.com/Atlantis-PBEM/Atlantis.git` | Game repository to answer from |
 | `GAME_REPO_BRANCH` | no | *(remote default)* | Branch or tag to check out |

@@ -95,6 +95,12 @@ export function variantFromThreadName(name: string): string | undefined {
 
 const quote = (s: unknown) => `“${String(s).slice(0, 60)}”`;
 
+/** Progress lines for the agent's phases (planning and review wrap the research). */
+export const PHASE_STEPS: Partial<Record<string, string>> = {
+  planning: 'Planning the research',
+  reviewing: 'Checking the answer against the sources',
+};
+
 /** A player-friendly description of a research step, e.g. Searching the rules for “tactics”. */
 export function describeToolCall(name: string, rawArgs: string): string {
   let a: Record<string, unknown> = {};

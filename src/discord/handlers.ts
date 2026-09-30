@@ -17,6 +17,7 @@ import { ASK, INFO } from './commands.js';
 import {
   describeToolCall,
   footer,
+  PHASE_STEPS,
   formatQuestion,
   progressMessage,
   splitMessage,
@@ -94,6 +95,13 @@ export function registerHandlers(client: Client, deps: HandlerDeps): void {
         onToolCall: (name, args) => {
           steps.push(describeToolCall(name, args));
           scheduleEdit();
+        },
+        onPhase: (phase) => {
+          const step = PHASE_STEPS[phase];
+          if (step) {
+            steps.push(step);
+            scheduleEdit();
+          }
         },
       });
       const chunks = splitMessage(result.text);

@@ -12,6 +12,8 @@ describe('loadConfig', () => {
     expect(c.rules).toEqual({ dir: './data/rules', build: true });
     expect(c.llm.requestTimeoutMs).toBe(120_000);
     expect(c.llm.maxConcurrent).toBe(1);
+    expect(c.llm.planStep).toBe(true);
+    expect(c.llm.reviewStep).toBe(true);
     expect(c.repo.url).toBe('https://github.com/Atlantis-PBEM/Atlantis.git');
     expect(c.repo.branch).toBeUndefined();
     expect(c.repo.syncIntervalMinutes).toBe(360);

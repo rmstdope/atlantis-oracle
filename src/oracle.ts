@@ -1,7 +1,7 @@
 import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions';
 import type { Config } from './config.js';
 import type { Logger } from './logger.js';
-import { answerQuestion, type AgentResult } from './llm/agent.js';
+import { answerQuestion, type AgentPhase, type AgentResult } from './llm/agent.js';
 import { findAbbreviations, glossaryNote } from './llm/glossary.js';
 import type { LlmClient } from './llm/client.js';
 import { Limiter } from './llm/limiter.js';
@@ -21,6 +21,7 @@ export interface AskInput {
   variant?: string;
   signal?: AbortSignal;
   onToolCall?: (name: string, args: string) => void;
+  onPhase?: (phase: AgentPhase) => void;
 }
 
 export interface OracleDeps {
@@ -99,8 +100,11 @@ export class Oracle {
         tools,
         firstTools: rulesTools.map((t) => t.name),
         toolContext: { root: this.repo.dir, variant, rules: this.rules },
+        planStep: this.config.llm.planStep,
+        reviewStep: this.config.llm.reviewStep,
         signal: input.signal,
         onToolCall: input.onToolCall,
+        onPhase: input.onPhase,
       }),
     );
     const ms = Date.now() - started;
@@ -111,6 +115,7 @@ export class Oracle {
         variant,
         iterations: result.iterations,
         hitIterationCap: result.hitIterationCap,
+        review: result.review,
         toolCalls: result.toolCalls.map((c) =>
           `${c.name}${c.ok ? '' : '!'} ${c.args}`.slice(0, 200),
         ),

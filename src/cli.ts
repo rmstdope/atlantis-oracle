@@ -41,6 +41,7 @@ async function main(): Promise<void> {
     turns: [{ role: 'user', content: question }],
     variant: values.variant,
     onToolCall: (name, args) => console.error(`  → ${name} ${args}`),
+    onPhase: (phase) => console.error(`[${phase}]`),
   });
 
   console.log(result.text);
@@ -48,7 +49,8 @@ async function main(): Promise<void> {
     `\n[${result.variant} @ ${result.commit.slice(0, 10)} · ${result.iterations} rounds · ` +
       `${result.toolCalls.length} tool calls · ${result.usage.promptTokens}+${result.usage.completionTokens} tokens ` +
       `(${result.usage.cachedTokens} cached) · ` +
-      `${(result.ms / 1000).toFixed(1)}s${result.hitIterationCap ? ' · hit iteration cap' : ''}]`,
+      `${(result.ms / 1000).toFixed(1)}s${result.hitIterationCap ? ' · hit iteration cap' : ''}` +
+      `${result.review ? ` · review: ${result.review}` : ''}]`,
   );
 }
 

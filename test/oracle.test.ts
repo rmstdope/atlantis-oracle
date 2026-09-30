@@ -6,10 +6,13 @@ import type { RulesDoc, RulesStore } from '../src/rules/store.js';
 import { fakeLlm, reply } from './helpers/fakeLlm.js';
 import { FIXTURE_REPO, silentLogger } from './helpers/fixture.js';
 
+// Plan and review steps are covered by the agent tests; keep these scripts short.
 const config = loadConfig({
   OPENAI_API_KEY: 'k',
   LLM_MODEL: 'm',
   DEFAULT_GAME_VARIANT: 'standard',
+  LLM_PLAN_STEP: 'false',
+  LLM_REVIEW_STEP: 'false',
 });
 const repo = {
   dir: FIXTURE_REPO,
