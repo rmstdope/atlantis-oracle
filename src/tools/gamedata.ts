@@ -26,7 +26,13 @@ export interface Table {
   entries: TableEntry[];
 }
 
-const TABLE_RE = /std::vector<(\w+)>\s+(\w+Defs)\s*=/g;
+/**
+ * Table declarations in the two styles found in Atlantis branches:
+ * `std::vector<ItemType> ItemDefs = {` (master) and `static ItemType id[] = {`
+ * followed by `ItemType *ItemDefs = id;` (stable).
+ */
+const TABLE_RE = /std::vector<(\w+)>\s+(\w+)\s*=|^(?:static\s+)?(\w+Type)\s+(\w+)\s*\[\s*\]\s*=/gm;
+const ALIAS_RE = /^(?:\w+Type)\s*\*\s*(\w+Defs)\s*=\s*(\w+)\s*;/gm;
 
 /** Tables whose index order matches an enum in gamedata.h, keyed by enum prefix. */
 const ENUM_PREFIX_TO_TABLE: Record<string, string> = {
@@ -105,8 +111,15 @@ export function parseGamedata(src: string): Table[] {
   for (let i = 0; i < src.length; i++) if (src[i] === '\n') lineStarts.push(i + 1);
   const lines = src.split('\n');
 
+  const aliases = new Map<string, string>();
+  for (const a of src.matchAll(ALIAS_RE)) aliases.set(a[2]!, a[1]!);
+
   const tables: Table[] = [];
   for (const m of src.matchAll(TABLE_RE)) {
+    const type = (m[1] ?? m[3])!;
+    const variable = (m[2] ?? m[4])!;
+    const name = aliases.get(variable) ?? variable;
+    if (!name.endsWith('Defs')) continue;
     const line = lineAt(lineStarts, m.index);
     const { entries, bodyStart } = scanEntries(src, m.index + m[0].length);
 
@@ -123,8 +136,8 @@ export function parseGamedata(src: string): Table[] {
       .slice(0, 25);
 
     tables.push({
-      name: m[2]!,
-      type: m[1]!,
+      name,
+      type,
       line,
       legend,
       entries: entries.map(([s, e], index) => {

@@ -7,6 +7,7 @@ import { createLlmClient } from './llm/client.js';
 import { createLogger } from './logger.js';
 import { Oracle } from './oracle.js';
 import { GameRepo } from './repo/sync.js';
+import { RulesStore } from './rules/store.js';
 
 async function main(): Promise<void> {
   const config = loadConfig();
@@ -15,9 +16,12 @@ async function main(): Promise<void> {
 
   const repo = new GameRepo(config.repo, logger);
   await repo.sync();
-  const stopSync = repo.startPeriodicSync();
+  // The first build of the rules can take a few minutes; later ones run after each sync.
+  const rules = new RulesStore(config.rules, logger);
+  await rules.prepare(repo);
+  const stopSync = repo.startPeriodicSync(() => rules.prepare(repo));
 
-  const oracle = new Oracle(config, repo, createLlmClient(config.llm), logger);
+  const oracle = new Oracle({ config, repo, rules, llm: createLlmClient(config.llm), logger });
   const client = createDiscordClient();
   registerHandlers(client, { config, discord, oracle, repo, logger });
 

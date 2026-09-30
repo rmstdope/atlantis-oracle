@@ -14,8 +14,9 @@ Ask it things like:
 >
 > In New Origins, how many mages can my faction have with 3 points in magic?
 
-The bot searches the configured Atlantis repository, reads the relevant code and
-rules text, and writes a player-friendly answer with references to the files it
+The bot looks the question up in the player rules, which it builds from the
+game source. If the rules don't settle it, it researches the source code. Then
+it writes a player-friendly answer that cites the rules sections and files it
 used.
 
 > **Status:** MVP. `/ask`, follow-up questions in answer threads, and
@@ -29,18 +30,22 @@ Discord user ──/ask──▶ Bot ──▶ LLM (OpenAI-compatible API)
                                  │   ▲
                      tool calls  │   │ tool results
                                  ▼   │
-          Repo tools (search / read / list / find definition)
-                                 │
-                                 ▼
-                    Local clone of the Atlantis repo
+             1. Rules tools (search_rules, read_rules)
+             2. Code tools  (search_code, read_file, list_dir, find_definition)
+                     │                            │
+                     ▼                            ▼
+     Rules built from the repo       Local clone of the Atlantis repo
+     (make + genrules → Markdown)
 ```
 
 1. A player asks a question with `/ask`.
-2. The bot sends the question to an LLM along with a set of **tools** that let
-   it search and read the local clone of the game repository.
-3. The LLM decides what to look up: grepping for an item or skill name, reading
-   `gamedata.cpp` tables, checking a game variant's `rules.cpp`, reading the
-   generated rules HTML, and so on. It keeps going until it has enough to answer.
+2. The bot sends the question to an LLM along with a set of **tools**. At
+   first, the LLM only gets the rules tools, so every answer starts from the
+   player rules for the game variant.
+3. If the rules don't settle the question, the code tools become available.
+   The LLM can then search the source, read files, and look up items, skills
+   and buildings in the `gamedata.cpp` tables. It keeps going until it has
+   enough to answer.
 4. The bot posts the answer, with source references, in a new thread. Players
    can ask follow-up questions by replying in the thread.
 
@@ -49,6 +54,22 @@ embeddings. The Atlantis game data mostly lives in large C++ tables where exact
 names matter, and plain text search is precise for that. This approach also
 works with any OpenAI-compatible server, including ones that don't serve an
 embeddings model.
+
+### Player rules
+
+On startup, and whenever the game repository changes, the bot builds each
+variant with the game's own `Makefile` and runs `<variant> genrules`. That
+produces the same rules HTML that players get. The bot converts it to Markdown
+under `RULES_DIR`. The build runs on a `git archive` export, so the clone stays
+clean. The first build takes a minute or less; after that, rules are cached per
+commit. If a build fails, the bot falls back to the committed
+`snapshot-tests/rules/<variant>.html`, if the branch has one. Without either,
+it researches the code only.
+
+The rules build runs the game repository's `Makefile` and the resulting game
+binary on the bot's machine, so only point `GAME_REPO_URL` at a repository you
+trust (or set `RULES_BUILD=false`). The LLM itself never runs anything; its
+tools only read.
 
 ### Game variants
 
@@ -66,6 +87,8 @@ directories.
 
 - Node.js 22 or newer
 - `git` on the `PATH` (used to clone and update the game repository)
+- `make` and a C++20 compiler (to build the player rules; set `RULES_BUILD=false`
+  to skip this and use committed snapshots only)
 - A Discord application with a bot token
 - An OpenAI-compatible chat-completions endpoint **with tool/function-calling
   support**, for example:
@@ -146,7 +169,7 @@ All configuration is done with environment variables, read from `.env` in develo
 | `OPENAI_API_KEY` | yes* | | API key. *Local servers usually accept any non-empty value. |
 | `LLM_MODEL` | yes | | Model name as the endpoint knows it, e.g. `gpt-4.1-mini`, `qwen3:32b` |
 | `LLM_TEMPERATURE` | no | `0.2` | Sampling temperature |
-| `LLM_MAX_TOOL_ITERATIONS` | no | `12` | Maximum tool-call rounds per question |
+| `LLM_MAX_TOOL_ITERATIONS` | no | `16` | Maximum tool-call rounds per question |
 | `LLM_REQUEST_TIMEOUT_SECONDS` | no | `120` | Timeout for each LLM request |
 | `LLM_MAX_CONCURRENT` | no | `1` | Questions researched at the same time; others wait in a queue. Keep at 1 for most local servers. |
 | `GAME_REPO_URL` | no | `https://github.com/Atlantis-PBEM/Atlantis.git` | Game repository to answer from |
@@ -154,8 +177,20 @@ All configuration is done with environment variables, read from `.env` in develo
 | `GAME_REPO_DIR` | no | `./data/game-repo` | Where the repository is cloned |
 | `GAME_REPO_SYNC_INTERVAL_MINUTES` | no | `360` | How often to `git pull`. Set to `0` to disable. |
 | `DEFAULT_GAME_VARIANT` | no | `standard` | Variant to assume when the player doesn't name one |
+| `RULES_DIR` | no | `./data/rules` | Where the built rules and the build workspace live |
+| `RULES_BUILD` | no | `true` | Build the rules with the game's `Makefile`. If `false`, only committed rules snapshots are used. |
 | `RATE_LIMIT_PER_USER_PER_MINUTE` | no | `3` | Questions allowed per user per minute |
 | `LOG_LEVEL` | no | `info` | `debug`, `info`, `warn` or `error` |
+
+### Choosing the branch
+
+Upstream's default branch, `master`, is no longer where development happens;
+`stable` is. Set `GAME_REPO_BRANCH=stable` to answer from it. The `stable`
+branch builds on macOS with Apple clang once
+[Atlantis-PBEM/Atlantis#299](https://github.com/Atlantis-PBEM/Atlantis/pull/299)
+is merged. Until then, use that PR's branch
+(`GAME_REPO_URL=https://github.com/rmstdope/Atlantis.git`,
+`GAME_REPO_BRANCH=macos-clang-build`), or run the bot on Linux.
 
 ### Using a different game repository
 
@@ -169,7 +204,7 @@ need adjustments in `src/llm/prompts.ts`.
 
 | Command | Description |
 |---|---|
-| `/ask question:<text> [variant:<name>]` | Ask a question. The answer is posted in a new thread. Used inside a thread, the bot answers in that thread. |
+| `/ask question:<text> [variant:<name>]` | Ask a question. The answer is posted in a new thread, and a status message shows the research steps while you wait. Used inside a thread, the bot answers in that thread. |
 | Message in an answer thread | Ask a follow-up. The bot uses the thread's recent conversation as context. |
 | `/oracle-info` | Show the repository, commit, variants and model currently in use (only visible to you) |
 

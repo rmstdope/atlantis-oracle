@@ -32,6 +32,8 @@ alters the layout or conventions below, update this file in the same change.
 - `vitest` for tests, `eslint` + `prettier` for linting and formatting
 - `git` on the PATH for repo sync. ripgrep comes bundled via `@vscode/ripgrep`
   (use its `rgPath`, not a system `rg`).
+- `make` and a C++20 compiler to build the player rules; `node-html-markdown`
+  converts them to Markdown.
 
 ## Commands
 
@@ -77,12 +79,17 @@ src/
   repo/
     sync.ts             GameRepo: clone, fetch + hard reset, commit, variant discovery
     paths.ts            resolves and sandboxes paths inside GAME_REPO_DIR
+  rules/
+    build.ts            builds rules HTML: git archive -> make GAME=<v> -> <v> genrules
+    markdown.ts         rules HTML -> Markdown, heading extraction
+    store.ts            RulesStore: per-variant rules, cached per commit, snapshot fallback
   tools/
     index.ts            registry, OpenAI tool schemas (z.toJSONSchema), runTool
     types.ts            Tool, ToolError, truncate
     searchCode.ts       ripgrep wrapper
     readFile.ts         read a line range
     listDir.ts
+    rules.ts            search_rules, read_rules
     gamedata.ts         parser for gamedata.cpp tables and gamedata.h enums
     findDefinition.ts   looks up a table entry by name, abbreviation or enum constant
 test/                   mirrors src/; helpers/ has the fixture path and a scripted fake LLM,
@@ -98,16 +105,22 @@ test/                   mirrors src/; helpers/ has the fixture path and a script
    The thread name ends in ` · <variant>`, so follow-ups need no stored state.
 2. For follow-ups, `discord/history.ts` rebuilds the turns from the thread's
    starter message and its last 20 messages. `oracle.ts` adds the system prompt
-   (repo, commit, selected variant) and takes an `LLM_MAX_CONCURRENT` slot.
-3. `llm/agent.ts` runs the loop: it calls the model with `tools`, runs any
+   (repo, commit, selected variant, whether rules exist) and takes an
+   `LLM_MAX_CONCURRENT` slot.
+3. `llm/agent.ts` runs the loop. **Rules first:** until the model has called a
+   rules tool (`firstTools`), only the rules tools are offered. Code tool calls
+   are refused, and an answer without any lookup gets one reminder. After that,
+   all tools are offered. Otherwise the loop calls the model with `tools`, runs any
    requested tool calls, appends the results, and repeats until the model
    returns a final answer or `LLM_MAX_TOOL_ITERATIONS` is reached. When the cap
    is hit, it makes one last call without tools to force an answer from what
    has been gathered.
    Total tool output per question is capped (60k characters) to protect small
    context windows.
-4. `handlers.ts` posts the answer, split by `format.ts` into several messages if
-   needed, with a `-#` footer (model, variant, repo@commit). `history.ts` strips
+4. While the agent works, `handlers.ts` keeps a progress message up to date
+   (throttled to one edit per 3s; the steps are described by
+   `format.describeToolCall`) and deletes it when the answer is posted. The
+   answer is split by `format.ts` into several messages if needed, with a `-#` footer (model, variant, repo@commit). `history.ts` strips
    the footer when it rebuilds context.
 
 `oracle.ts` and everything under `llm/`, `tools/` and `repo/` must not depend on
@@ -121,16 +134,23 @@ it), and a handler that returns **plain text**.
 
 | Tool | Purpose |
 |---|---|
+| `search_rules` | regex/literal search in the variant's rules Markdown; results grouped by section trail (`Skills > Studying`) |
+| `read_rules` | table of contents (no args), a section by heading or trail, or a line range |
 | `search_code` | ripgrep for a regex/literal, optional path glob; returns `path:line: text` with limited context |
 | `read_file` | read `path` from `start_line` to `end_line` (default 150, max 300 lines per call) |
 | `list_dir` | list a directory within the repo |
-| `find_definition` | find the entry for an item, skill, object, terrain, etc. in `gamedata.cpp`, by name, tag or enum (e.g. `TACT`, `plate armor`, `I_PLATEARMOR`). Returns the field legend and the `gamedata.h` enum constant, so the model can look for variant changes in `extra.cpp` |
+| `find_definition` | look up one or more (`queries`, max 25) items, skills, objects, terrain etc. in `gamedata.cpp` by name, tag or enum (e.g. `TACT`, `plate armor`, `I_PLATEARMOR`). Reports the enum constant, "disabled by default" status and the lines in `<variant>/extra.cpp` that change the entry; full entries with the field legend for up to 4 matches, one summary line each beyond that |
 
 Rules for tools:
 
 - **Sandboxing:** every path goes through `repo/paths.ts`. It rejects absolute
-  paths, `..` escapes and symlinks that resolve outside `GAME_REPO_DIR`. Never
-  run anything from the game repo; it is only read.
+  paths, `..` escapes and symlinks that resolve outside `GAME_REPO_DIR`. Tools
+  only read.
+- **Executing game code:** the only thing that runs code from the game repo is
+  the rules build (`make` + `genrules`). The bot triggers it after a sync, never
+  the LLM. It runs on an export under `RULES_DIR/build`, and it means the
+  operator must trust `GAME_REPO_URL`. Never give the LLM a way to trigger
+  builds or run commands.
 - **Output limits:** truncate results to a fixed character budget and say so
   (`[truncated: 212 more matches, narrow your search]`). A small local model's
   context runs out quickly, so this is critical.
@@ -156,13 +176,18 @@ Rules for tools:
 
 ## Atlantis codebase knowledge (for the system prompt and `find_definition`)
 
-Upstream layout, verified against Atlantis-PBEM/Atlantis `main`:
+Upstream layout, verified against Atlantis-PBEM/Atlantis `master` and `stable`.
+Upstream's default branch `master` is stale; active development is on `stable`.
+The two differ in places:
 
 - `gamedata.cpp` holds the core data tables: `ItemDefs`, `ManDefs`, `MonDefs`,
   `WeaponDefs`, `ArmorDefs`, `MountDefs`, `BattleItemDefs`, `SkillDefs`,
   `ObjectDefs`, `TerrainDefs`, `SpecialDefs`, `EffectDefs`, `AttribDefs`, and
   more. Skills and items are referred to by short tags such as `"TACT"` or
-  `"COMB"`.
+  `"COMB"`. On `master` the tables are `std::vector<ItemType> ItemDefs = {…}`;
+  on `stable` they are C arrays with an alias (`ItemType id[] = {…}` and then
+  `ItemType *ItemDefs = id;`). `tools/gamedata.ts` parses both. Entry order
+  matches the anonymous enums in `gamedata.h` (`I_*`, `S_*`, `O_*`, `R_*`).
 - `<variant>/rules.cpp` holds the variant's `GameDefs` constants (speeds, costs,
   limits) and faction-point tables (`allowedMages`, `allowedTaxes`, ...).
 - `<variant>/extra.cpp` holds `Game::ModifyTablesPerRuleset()`, which
@@ -176,11 +201,14 @@ Upstream layout, verified against Atlantis-PBEM/Atlantis `main`:
 - Engine logic (how orders resolve): `parseorders.cpp`, `runorders.cpp`,
   `monthorders.cpp`, `battle.cpp`, `army.cpp`, `economy.cpp`, `production.cpp`,
   `market.cpp`, `spells.cpp`, `specials.cpp`, `unit.cpp`, `faction.cpp`.
-- Player-facing rules: `genrules.cpp` generates the rules HTML from the data.
-  Generated copies are in `snapshot-tests/rules/<variant>.html`, and the
-  variant intros are in `<variant>/<variant>_intro.html`. For "how do I play"
-  questions these are often the best source, but code is authoritative when the
-  two disagree.
+- Player-facing rules: `genrules.cpp` generates the rules HTML from the data
+  (`<variant> genrules <intro> <css> <out>`). The bot builds them itself with
+  the plain `Makefile`. The CMake build doesn't work with CMake 4
+  (`CompilerSupport.cmake` uses `EQUALS`), and on macOS `stable` needs
+  Atlantis-PBEM/Atlantis#299. `master` also has committed copies in
+  `snapshot-tests/rules/<variant>.html`, used as the fallback; `stable` has
+  none. Keep the upstream compiler flags: e.g. `-O1` breaks the link, because
+  `Faction::gets_gm_report` is declared `inline` in a `.cpp`.
 
 The agent should also work when `GAME_REPO_URL` points at a fork with a different
 layout. Present these hints as "likely locations", not certainties, and keep

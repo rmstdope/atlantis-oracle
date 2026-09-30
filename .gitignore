@@ -144,3 +144,6 @@ vite.config.ts.timestamp-*
 
 # Local clone of the game repository
 data/
+
+# Editor backups (e.g. .env~ may contain secrets)
+*~

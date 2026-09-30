@@ -5,6 +5,7 @@ import { createLlmClient } from './llm/client.js';
 import { createLogger } from './logger.js';
 import { Oracle } from './oracle.js';
 import { GameRepo } from './repo/sync.js';
+import { RulesStore } from './rules/store.js';
 
 const USAGE = 'Usage: npm run ask -- [--variant <name>] [--no-sync] "<question>"';
 
@@ -32,7 +33,10 @@ async function main(): Promise<void> {
     await repo.sync();
   }
 
-  const oracle = new Oracle(config, repo, createLlmClient(config.llm), logger);
+  const rules = new RulesStore(config.rules, logger);
+  await rules.prepare(repo);
+
+  const oracle = new Oracle({ config, repo, rules, llm: createLlmClient(config.llm), logger });
   const result = await oracle.ask({
     turns: [{ role: 'user', content: question }],
     variant: values.variant,
@@ -42,7 +46,8 @@ async function main(): Promise<void> {
   console.log(result.text);
   console.error(
     `\n[${result.variant} @ ${result.commit.slice(0, 10)} · ${result.iterations} rounds · ` +
-      `${result.toolCalls.length} tool calls · ${result.usage.promptTokens}+${result.usage.completionTokens} tokens · ` +
+      `${result.toolCalls.length} tool calls · ${result.usage.promptTokens}+${result.usage.completionTokens} tokens ` +
+      `(${result.usage.cachedTokens} cached) · ` +
       `${(result.ms / 1000).toFixed(1)}s${result.hitIterationCap ? ' · hit iteration cap' : ''}]`,
   );
 }

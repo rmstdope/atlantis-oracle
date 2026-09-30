@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { loadConfig } from '../src/config.js';
 import { Oracle } from '../src/oracle.js';
 import type { GameRepo } from '../src/repo/sync.js';
+import type { RulesDoc, RulesStore } from '../src/rules/store.js';
 import { fakeLlm, reply } from './helpers/fakeLlm.js';
 import { FIXTURE_REPO, silentLogger } from './helpers/fixture.js';
 
@@ -15,19 +16,38 @@ const repo = {
   commit: 'abcdef1234567890',
   variants: ['neworigins', 'standard'],
 } as GameRepo;
+const doc = { variant: 'standard', lines: ['# Rules'], headings: [] } as unknown as RulesDoc;
+const rules = {
+  get: (v: string) => (v === 'standard' ? doc : undefined),
+  variants: ['standard'],
+} as unknown as RulesStore;
+
+const makeOracle = (llm = fakeLlm([])) =>
+  new Oracle({ config, repo, rules, llm, logger: silentLogger });
 
 describe('Oracle', () => {
   it('resolves variants case-insensitively with a default fallback', () => {
-    const oracle = new Oracle(config, repo, fakeLlm([]), silentLogger);
+    const oracle = makeOracle();
     expect(oracle.resolveVariant('NewOrigins')).toBe('neworigins');
     expect(oracle.resolveVariant('bogus')).toBe('standard');
     expect(oracle.resolveVariant(undefined)).toBe('standard');
   });
 
-  it('builds the system prompt and passes the conversation', async () => {
+  it('offers only rules tools first when rules exist', async () => {
+    // Answering without tools earns one reminder to check the rules.
+    const llm = fakeLlm([reply('from memory'), reply('answer')]);
+    const r = await makeOracle(llm).ask({ turns: [{ role: 'user', content: 'q' }] });
+    expect(r).toMatchObject({ variant: 'standard', text: 'answer' });
+    expect(llm.requests[0]!.tools!.map((t) => ('function' in t ? t.function.name : ''))).toEqual([
+      'search_rules',
+      'read_rules',
+    ]);
+    expect(llm.requests[0]!.messages[0]!.content).toContain('Always start with the player rules');
+  });
+
+  it('offers code tools directly and passes the conversation when a variant has no rules', async () => {
     const llm = fakeLlm([reply('answer')]);
-    const oracle = new Oracle(config, repo, llm, silentLogger);
-    const r = await oracle.ask({
+    const r = await makeOracle(llm).ask({
       turns: [
         { role: 'user', content: 'q1' },
         { role: 'assistant', content: 'a1' },
@@ -39,7 +59,8 @@ describe('Oracle', () => {
     const [system, ...rest] = llm.requests[0]!.messages;
     expect(system!.content).toContain('assume "neworigins"');
     expect(system!.content).toContain('commit abcdef1234');
-    expect(system!.content).toContain('Variants in this repository: neworigins, standard');
+    expect(system!.content).toContain('No player rules are available');
     expect(rest.map((m) => m.content)).toEqual(['q1', 'a1', 'q2']);
+    expect(llm.requests[0]!.tools).toHaveLength(4);
   });
 });

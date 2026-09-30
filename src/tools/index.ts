@@ -4,12 +4,19 @@ import { PathError } from '../repo/paths.js';
 import { findDefinition } from './findDefinition.js';
 import { listDir } from './listDir.js';
 import { readFile } from './readFile.js';
+import { readRules, searchRules } from './rules.js';
 import { searchCode } from './searchCode.js';
 import { ToolError, type Tool, type ToolContext } from './types.js';
 
 export type { Tool, ToolContext } from './types.js';
 
-export const defaultTools: Tool[] = [searchCode, readFile, listDir, findDefinition] as Tool[];
+/** Tools over the player rules; the agent offers these first. */
+export const rulesTools: Tool[] = [searchRules, readRules] as Tool[];
+
+/** Tools over the game source code. */
+export const codeTools: Tool[] = [searchCode, readFile, listDir, findDefinition] as Tool[];
+
+export const defaultTools: Tool[] = [...rulesTools, ...codeTools];
 
 export function toOpenAITools(tools: Tool[]): ChatCompletionFunctionTool[] {
   return tools.map((t) => {

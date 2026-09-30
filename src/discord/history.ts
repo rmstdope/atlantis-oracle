@@ -11,7 +11,11 @@ export interface HistoryMessage {
 const MAX_TURN_CHARS = 2000;
 export const HISTORY_LIMIT = 20;
 
+/** Progress messages from format.progressMessage; not part of the conversation. */
+const STATUS_PREFIXES = ['🔎 Researching', '⏳ Waiting'];
+
 function cleanBotMessage(content: string): string {
+  if (STATUS_PREFIXES.some((p) => content.startsWith(p))) return '';
   return content
     .split('\n')
     .filter((l) => !l.startsWith('-# '))

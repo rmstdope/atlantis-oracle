@@ -92,3 +92,53 @@ export function variantFromThreadName(name: string): string | undefined {
   const i = name.lastIndexOf(VARIANT_SEP);
   return i === -1 ? undefined : name.slice(i + VARIANT_SEP.length).trim() || undefined;
 }
+
+const quote = (s: unknown) => `“${String(s).slice(0, 60)}”`;
+
+/** A player-friendly description of a research step, e.g. Searching the rules for “tactics”. */
+export function describeToolCall(name: string, rawArgs: string): string {
+  let a: Record<string, unknown> = {};
+  try {
+    a = (JSON.parse(rawArgs) as Record<string, unknown>) ?? {};
+  } catch {
+    // Show the step without details.
+  }
+  switch (name) {
+    case 'search_rules':
+      return `Searching the rules for ${quote(a.pattern)}`;
+    case 'read_rules':
+      return a.section
+        ? `Reading the rules: ${quote(a.section)}`
+        : a.start_line
+          ? 'Reading the rules'
+          : 'Reading the rules’ table of contents';
+    case 'search_code':
+      return `Searching the code for ${quote(a.pattern)}`;
+    case 'read_file':
+      return `Reading \`${String(a.path)}\``;
+    case 'list_dir':
+      return `Browsing \`${String(a.path ?? '.')}\``;
+    case 'find_definition': {
+      const q = Array.isArray(a.queries) ? a.queries.map(String) : [];
+      const shown = q.slice(0, 3).join(', ') + (q.length > 3 ? ` and ${q.length - 3} more` : '');
+      return `Looking up ${shown || 'game data'}`;
+    }
+    default:
+      return `Using ${name}`;
+  }
+}
+
+function formatElapsed(ms: number): string {
+  const s = Math.floor(ms / 1000);
+  return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, '0')}s`;
+}
+
+/** The status message shown while a question is being researched. */
+export function progressMessage(steps: string[], elapsedMs: number, queued = 0): string {
+  if (steps.length === 0 && queued > 0) {
+    return `⏳ Waiting for ${queued} question${queued === 1 ? '' : 's'} ahead of yours…`;
+  }
+  const recent = steps.slice(-5).map((s) => `-# ${s}`);
+  const earlier = steps.length > 5 ? [`-# … ${steps.length - 5} earlier steps`] : [];
+  return [`🔎 Researching… (${formatElapsed(elapsedMs)})`, ...earlier, ...recent].join('\n');
+}

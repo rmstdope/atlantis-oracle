@@ -8,7 +8,8 @@ describe('loadConfig', () => {
     const c = loadConfig(minimal);
     expect(c.llm.baseURL).toBe('https://api.openai.com/v1');
     expect(c.llm.temperature).toBe(0.2);
-    expect(c.llm.maxToolIterations).toBe(12);
+    expect(c.llm.maxToolIterations).toBe(16);
+    expect(c.rules).toEqual({ dir: './data/rules', build: true });
     expect(c.llm.requestTimeoutMs).toBe(120_000);
     expect(c.llm.maxConcurrent).toBe(1);
     expect(c.repo.url).toBe('https://github.com/Atlantis-PBEM/Atlantis.git');
@@ -37,7 +38,9 @@ describe('loadConfig', () => {
       LLM_TEMPERATURE: '0.7',
       GAME_REPO_SYNC_INTERVAL_MINUTES: '0',
       ALLOWED_CHANNEL_IDS: ' 1, 2 ,,3',
+      RULES_BUILD: 'false',
     });
+    expect(c.rules.build).toBe(false);
     expect(c.llm.temperature).toBe(0.7);
     expect(c.repo.syncIntervalMinutes).toBe(0);
     expect(c.discord.allowedChannelIds).toEqual(['1', '2', '3']);

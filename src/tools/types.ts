@@ -1,8 +1,19 @@
+import type { RulesDoc } from '../rules/store.js';
 import type { z } from 'zod';
 
 export interface ToolContext {
   /** Absolute path of the game repository root. */
   root: string;
+  /** The game variant the question is about. */
+  variant: string;
+  /** Player rules per variant; absent when none could be built or found. */
+  rules?: RulesLookup;
+}
+
+/** The part of RulesStore the tools need. */
+export interface RulesLookup {
+  get(variant: string): RulesDoc | undefined;
+  readonly variants: string[];
 }
 
 export interface Tool<S extends z.ZodType = z.ZodType> {

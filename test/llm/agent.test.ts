@@ -5,7 +5,9 @@ import {
   stripThinking,
   type AgentOptions,
 } from '../../src/llm/agent.js';
-import { defaultTools } from '../../src/tools/index.js';
+import { codeTools, defaultTools, type Tool } from '../../src/tools/index.js';
+import { defineTool } from '../../src/tools/types.js';
+import { z } from 'zod';
 import { callTools, fakeLlm, reply, type ScriptedReply } from '../helpers/fakeLlm.js';
 import { FIXTURE_REPO } from '../helpers/fixture.js';
 
@@ -20,8 +22,8 @@ function run(script: ScriptedReply[], overrides: Partial<AgentOptions> = {}) {
       { role: 'system', content: 'sys' },
       { role: 'user', content: 'What does TACT cost?' },
     ],
-    tools: defaultTools,
-    toolContext: { root: FIXTURE_REPO },
+    tools: codeTools,
+    toolContext: { root: FIXTURE_REPO, variant: 'standard' },
     ...overrides,
   });
   return { llm, promise };
@@ -37,7 +39,7 @@ describe('answerQuestion', () => {
       hitIterationCap: false,
       toolCalls: [],
     });
-    expect(r.usage).toEqual({ promptTokens: 10, completionTokens: 5 });
+    expect(r.usage).toEqual({ promptTokens: 10, completionTokens: 5, cachedTokens: 0 });
     expect(llm.requests[0]!.tools).toHaveLength(4);
     expect(llm.requests[0]!.tool_choice).toBe('auto');
     expect(llm.requests[0]!.model).toBe('test-model');
@@ -45,7 +47,7 @@ describe('answerQuestion', () => {
 
   it('runs tool calls and feeds results back', async () => {
     const { llm, promise } = run([
-      callTools(['find_definition', { query: 'TACT' }]),
+      callTools(['find_definition', { queries: ['TACT'] }]),
       callTools(
         ['search_code', { pattern: 'S_TACTICS', glob: '*/extra.cpp', context: 0 }],
         ['read_file', { path: 'standard/rules.cpp', start_line: 4, end_line: 4 }],
@@ -64,7 +66,7 @@ describe('answerQuestion', () => {
     const toolMessages = last.filter((m) => m.role === 'tool');
     expect(toolMessages).toHaveLength(3);
     expect(toolMessages[0]).toMatchObject({ tool_call_id: 'call_0' });
-    expect(String(toolMessages[0]!.content)).toContain('SkillDefs[1] (enum S_TACTICS)');
+    expect(String(toolMessages[0]!.content)).toContain('SkillDefs[1] S_TACTICS');
     expect(String(toolMessages[1]!.content)).toContain('standard/extra.cpp:4:');
     expect(toolMessages[2]).toMatchObject({ tool_call_id: 'call_1' });
 
@@ -133,6 +135,82 @@ describe('answerQuestion', () => {
 
   it('propagates LLM failures', async () => {
     await expect(run([]).promise).rejects.toThrow(/script exhausted/);
+  });
+});
+
+describe('rules-first gating', () => {
+  // A stand-in rules tool so the gating can be tested without a rules store.
+  const fakeRules = defineTool({
+    name: 'search_rules',
+    description: 'rules',
+    schema: z.object({ pattern: z.string() }),
+    handler: async ({ pattern }) => `rules hit for ${pattern}`,
+  }) as Tool;
+  const tools = [fakeRules, ...codeTools];
+  const names = (req: { tools?: unknown[] }) =>
+    (req.tools ?? []).map((t) => (t as { function: { name: string } }).function.name);
+
+  it('offers only the first tools until one has been used', async () => {
+    const { llm, promise } = run(
+      [
+        callTools(['search_rules', { pattern: 'tactics' }]),
+        callTools(['search_code', { pattern: 'S_TACTICS', context: 0 }]),
+        reply('done'),
+      ],
+      { tools, firstTools: ['search_rules'] },
+    );
+    const r = await promise;
+    expect(names(llm.requests[0]!)).toEqual(['search_rules']);
+    expect(names(llm.requests[1]!)).toEqual([
+      'search_rules',
+      'search_code',
+      'read_file',
+      'list_dir',
+      'find_definition',
+    ]);
+    expect(r.toolCalls.map((c) => [c.name, c.ok])).toEqual([
+      ['search_rules', true],
+      ['search_code', true],
+    ]);
+  });
+
+  it('refuses code tools called before the rules', async () => {
+    const { llm, promise } = run(
+      [
+        callTools(['search_code', { pattern: 'x' }]),
+        callTools(['search_rules', { pattern: 'x' }]),
+        reply('ok'),
+      ],
+      { tools, firstTools: ['search_rules'] },
+    );
+    const r = await promise;
+    expect(r.toolCalls.map((c) => c.ok)).toEqual([false, true]);
+    const refusal = llm.requests[1]!.messages.find((m) => m.role === 'tool');
+    expect(String(refusal!.content)).toMatch(/check the game rules first \(search_rules\)/);
+    expect(names(llm.requests[1]!)).toEqual(['search_rules']);
+  });
+
+  it('reminds the model once when it answers without looking anything up', async () => {
+    const { llm, promise } = run([reply('from memory'), reply('still from memory')], {
+      tools,
+      firstTools: ['search_rules'],
+    });
+    const r = await promise;
+    expect(r.text).toBe('still from memory');
+    expect(llm.requests[1]!.messages.slice(-2)).toEqual([
+      { role: 'assistant', content: 'from memory' },
+      { role: 'user', content: expect.stringMatching(/look the question up in the game rules/) },
+    ]);
+  });
+
+  it('does not gate when the first tools are not available', async () => {
+    const { llm, promise } = run([reply('answer')], {
+      tools: codeTools,
+      firstTools: ['search_rules'],
+    });
+    expect((await promise).text).toBe('answer');
+    expect(names(llm.requests[0]!)).toHaveLength(4);
+    expect(defaultTools.length).toBe(6);
   });
 });
 

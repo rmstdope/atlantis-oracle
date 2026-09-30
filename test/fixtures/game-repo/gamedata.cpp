@@ -21,7 +21,7 @@ std::vector<ItemType> ItemDefs =
      "MINI", 1, 1, 1, {{-1, 0}, {-1, 0}, {-1, 0}, {-1, 0}},
      5, IT_NORMAL, 60, 0},
     {"plate armor","plate armor","PARM",
-     0,
+     ItemType::DISABLED,
      "ARMO",3,3,1, {{I_IRON,3},{-1,0},{-1,0},{-1,0}},
      3, IT_NORMAL | IT_ARMOR, 250,1},
 };

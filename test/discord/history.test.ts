@@ -25,6 +25,20 @@ describe('buildTurns', () => {
     ]);
   });
 
+  it('ignores progress messages', () => {
+    const turns = buildTurns(BOT, undefined, [
+      msg('u1', 'q1'),
+      msg(BOT, 'a1'),
+      msg('u1', 'q2'),
+      msg(BOT, '🔎 Researching… (12s)\n-# Searching the rules for “x”'),
+    ]);
+    expect(turns).toEqual([
+      { role: 'user', content: 'q1' },
+      { role: 'assistant', content: 'a1' },
+      { role: 'user', content: 'q2' },
+    ]);
+  });
+
   it('merges consecutive user messages from different users', () => {
     const turns = buildTurns(BOT, undefined, [msg('u1', 'a'), msg('u2', 'b')]);
     expect(turns).toEqual([{ role: 'user', content: 'a\n\nb' }]);

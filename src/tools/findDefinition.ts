@@ -10,8 +10,11 @@ import {
 } from './gamedata.js';
 import { defineTool, ToolError, truncate } from './types.js';
 
-const MAX_MATCHES = 5;
-const OUTPUT_BUDGET = 8000;
+const MAX_QUERIES = 25;
+/** Up to this many matches are shown in full; beyond that, one summary line each. */
+const FULL_ENTRIES = 4;
+const MAX_MATCHES = 40;
+const OUTPUT_BUDGET = 10000;
 
 interface Cached {
   mtimeMs: number;
@@ -42,6 +45,27 @@ async function loadTables(root: string): Promise<Table[]> {
   return tables;
 }
 
+/** Lines in the variant's extra.cpp that mention an enum constant, e.g. EnableItem(I_PICK). */
+async function variantChanges(root: string, variant: string): Promise<Map<string, string[]>> {
+  const file = path.join(variant, 'extra.cpp');
+  let lines: string[];
+  try {
+    lines = (await readFile(path.join(root, file), 'utf8')).split('\n');
+  } catch {
+    return new Map();
+  }
+  const refs = new Map<string, string[]>();
+  lines.forEach((line, i) => {
+    const code = line.replace(/\/\/.*$/, '');
+    for (const m of code.matchAll(/\b([ISOR]_[A-Z0-9_]+)\b/g)) {
+      const list = refs.get(m[1]!) ?? [];
+      list.push(`${file}:${i + 1}: ${line.trim()}`);
+      refs.set(m[1]!, list);
+    }
+  });
+  return refs;
+}
+
 function numbered(entry: TableEntry): string {
   const indent = new RegExp(`^\\s{0,${entry.column}}`);
   return entry.text
@@ -53,20 +77,30 @@ function numbered(entry: TableEntry): string {
 const lineRange = (e: TableEntry) =>
   e.startLine === e.endLine ? `${e.startLine}` : `${e.startLine}-${e.endLine}`;
 
+const isDisabled = (e: TableEntry) => /\b\w+::DISABLED\b/.test(e.text);
+
+function matches(entry: TableEntry, q: string): boolean {
+  return entry.strings.some((s) => s.toLowerCase() === q) || entry.enumName?.toLowerCase() === q;
+}
+
 export const findDefinition = defineTool({
   name: 'find_definition',
   description:
-    'Look up the data-table entry for an item, skill, building/ship (object), terrain, weapon, armor, ' +
-    'monster etc. in gamedata.cpp by name, abbreviation or enum constant (e.g. "plate armor", "PARM", ' +
-    '"TACT", "I_PLATEARMOR"). Returns the entry with line numbers and the field legend. ' +
-    'These are the base values; a variant may change them in <variant>/extra.cpp.',
+    'Look up data-table entries for items, skills, buildings/ships (objects), terrain, weapons, armor, ' +
+    'monsters etc. in gamedata.cpp by name, abbreviation or enum constant (e.g. "plate armor", "PARM", ' +
+    '"TACT", "I_PLATEARMOR"). Pass several names at once to look them up together. Shows whether each ' +
+    "entry is disabled by default and which lines in the variant's extra.cpp change it.",
   schema: z.object({
-    query: z.string().min(1).describe('Name, abbreviation or enum constant'),
+    queries: z
+      .array(z.string().min(1))
+      .min(1)
+      .max(MAX_QUERIES)
+      .describe('One or more names, abbreviations or enum constants'),
     table: z.string().optional().describe('Restrict to one table, e.g. "SkillDefs" or "ItemDefs"'),
   }),
   async handler(args, ctx) {
-    const tables = await loadTables(await realpath(ctx.root));
-    const q = args.query.trim().toLowerCase();
+    const root = await realpath(ctx.root);
+    const tables = await loadTables(root);
     const wanted = args.table?.toLowerCase();
     const selected = wanted ? tables.filter((t) => t.name.toLowerCase() === wanted) : tables;
     if (selected.length === 0) {
@@ -74,49 +108,63 @@ export const findDefinition = defineTool({
         `Unknown table "${args.table}". Tables: ${tables.map((t) => t.name).join(', ')}`,
       );
     }
+    const changes = await variantChanges(root, ctx.variant);
 
-    const matches = selected.flatMap((t) =>
-      t.entries
-        .filter(
-          (e) => e.strings.some((s) => s.toLowerCase() === q) || e.enumName?.toLowerCase() === q,
-        )
-        .map((e) => ({ table: t, entry: e })),
-    );
-
-    if (matches.length === 0) {
+    const found: { table: Table; entry: TableEntry }[] = [];
+    const notes: string[] = [];
+    for (const raw of args.queries) {
+      const q = raw.trim().toLowerCase();
+      const hits = selected.flatMap((t) =>
+        t.entries.filter((e) => matches(e, q)).map((e) => ({ table: t, entry: e })),
+      );
+      if (hits.length > 0) {
+        for (const h of hits) if (!found.some((f) => f.entry === h.entry)) found.push(h);
+        continue;
+      }
       const similar = selected
-        .flatMap((t) => t.entries.map((e) => ({ t, e })))
-        .filter(({ e }) => e.strings.some((s) => s.toLowerCase().includes(q)))
-        .slice(0, 10)
-        .map(({ t, e }) => `${e.strings[0]} (${t.name})`);
-      return similar.length > 0
-        ? `No exact match for "${args.query}". Similar entries: ${similar.join(', ')}`
-        : `No entry matches "${args.query}". Try search_code.`;
+        .flatMap((t) => t.entries.map((e) => `${e.strings[0]} (${t.name})`))
+        .filter((s) => s.toLowerCase().includes(q))
+        .slice(0, 8);
+      notes.push(
+        similar.length > 0
+          ? `No exact match for "${raw}". Similar: ${similar.join(', ')}`
+          : `No entry matches "${raw}".`,
+      );
     }
 
+    const full = found.length <= FULL_ENTRIES;
     const shownLegends = new Set<string>();
-    const parts = matches.slice(0, MAX_MATCHES).map(({ table, entry }) => {
+    const parts = found.slice(0, MAX_MATCHES).map(({ table, entry }) => {
+      const status = isDisabled(entry) ? 'disabled by default' : 'enabled by default';
       const header =
         `${table.name}[${entry.index}]` +
-        (entry.enumName ? ` (enum ${entry.enumName})` : '') +
-        ` — gamedata.cpp:${lineRange(entry)}`;
+        (entry.enumName ? ` ${entry.enumName}` : '') +
+        ` — gamedata.cpp:${lineRange(entry)} — ${status}`;
+      const variantLines = entry.enumName ? (changes.get(entry.enumName) ?? []) : [];
+      const variantNote =
+        variantLines.length > 0
+          ? `\n  ${ctx.variant} changes it:\n${variantLines.map((l) => `    ${l}`).join('\n')}`
+          : entry.enumName
+            ? `\n  not mentioned in ${ctx.variant}/extra.cpp`
+            : '';
+      if (!full) return `${header}\n  ${entry.text.split('\n')[0]!.trim()}${variantNote}`;
+
       let legend = '';
       if (!shownLegends.has(table.name) && table.legend.length > 0) {
         shownLegends.add(table.name);
         legend = `Field order (from gamedata.cpp comments):\n${table.legend.join('\n')}\n`;
       }
-      return `${header}\n${legend}${numbered(entry)}`;
+      return `${header}${variantNote}\n${legend}${numbered(entry)}`;
     });
 
-    const enumNames = matches.map((m) => m.entry.enumName).filter(Boolean);
-    const hint =
-      enumNames.length > 0
-        ? `\nTo see variant changes, search for ${[...new Set(enumNames)].join(', ')} in */extra.cpp.`
-        : '';
-    const more =
-      matches.length > MAX_MATCHES
-        ? `\n[${matches.length - MAX_MATCHES} more matches not shown]`
-        : '';
-    return truncate(parts.join('\n\n') + more + hint, OUTPUT_BUDGET);
+    if (!full) parts.unshift('Summary view; look up fewer names at once to see full entries.');
+    if (found.length > MAX_MATCHES)
+      parts.push(`[${found.length - MAX_MATCHES} more matches not shown]`);
+    if (parts.length === 0) return notes.join('\n') + '\nTry search_code.';
+    return truncate(
+      [...parts, ...notes].join('\n\n'),
+      OUTPUT_BUDGET,
+      'look up fewer names at once',
+    );
   },
 });

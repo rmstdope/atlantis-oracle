@@ -53,13 +53,18 @@ export class GameRepo {
     return this.syncing;
   }
 
-  /** Starts periodic syncing. Returns a function that stops it. */
-  startPeriodicSync(): () => void {
+  /**
+   * Starts periodic syncing; `onSynced` runs after each successful sync.
+   * Returns a function that stops it.
+   */
+  startPeriodicSync(onSynced?: () => Promise<void>): () => void {
     if (this.cfg.syncIntervalMinutes <= 0) return () => {};
     const timer = setInterval(() => {
-      this.sync().catch((err: unknown) => {
-        this.logger.warn({ err }, 'Periodic game repo sync failed; keeping current checkout');
-      });
+      this.sync()
+        .then(() => onSynced?.())
+        .catch((err: unknown) => {
+          this.logger.warn({ err }, 'Periodic game repo sync failed; keeping current checkout');
+        });
     }, this.cfg.syncIntervalMinutes * 60_000);
     timer.unref();
     return () => clearInterval(timer);

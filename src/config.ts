@@ -27,7 +27,7 @@ const envSchema = z.object({
   OPENAI_API_KEY: z.string().min(1, 'OPENAI_API_KEY is required (any value for local servers)'),
   LLM_MODEL: z.string().min(1, 'LLM_MODEL is required'),
   LLM_TEMPERATURE: withDefault(z.coerce.number().min(0).max(2), 0.2),
-  LLM_MAX_TOOL_ITERATIONS: withDefault(z.coerce.number().int().min(1).max(50), 12),
+  LLM_MAX_TOOL_ITERATIONS: withDefault(z.coerce.number().int().min(1).max(50), 16),
   LLM_REQUEST_TIMEOUT_SECONDS: withDefault(z.coerce.number().int().positive(), 120),
   LLM_MAX_CONCURRENT: withDefault(z.coerce.number().int().positive(), 1),
 
@@ -36,6 +36,8 @@ const envSchema = z.object({
   GAME_REPO_DIR: withDefault(z.string().min(1), './data/game-repo'),
   GAME_REPO_SYNC_INTERVAL_MINUTES: withDefault(z.coerce.number().min(0), 360),
   DEFAULT_GAME_VARIANT: withDefault(z.string().min(1), 'standard'),
+  RULES_DIR: withDefault(z.string().min(1), './data/rules'),
+  RULES_BUILD: withDefault(z.stringbool(), 'true'),
 
   RATE_LIMIT_PER_USER_PER_MINUTE: withDefault(z.coerce.number().int().positive(), 3),
   LOG_LEVEL: withDefault(z.enum(['debug', 'info', 'warn', 'error']), 'info'),
@@ -58,6 +60,13 @@ export interface RepoConfig {
   syncIntervalMinutes: number;
 }
 
+export interface RulesConfig {
+  /** Where built rules (HTML, Markdown) and the build workspace live. */
+  dir: string;
+  /** Build rules with the game's Makefile; otherwise use committed snapshots only. */
+  build: boolean;
+}
+
 export interface DiscordConfig {
   token: string;
   clientId: string;
@@ -69,6 +78,7 @@ export interface DiscordConfig {
 export interface Config {
   llm: LlmConfig;
   repo: RepoConfig;
+  rules: RulesConfig;
   defaultVariant: string;
   logLevel: 'debug' | 'info' | 'warn' | 'error';
   discord: Partial<DiscordConfig> &
@@ -99,6 +109,10 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
       branch: e.GAME_REPO_BRANCH,
       dir: e.GAME_REPO_DIR,
       syncIntervalMinutes: e.GAME_REPO_SYNC_INTERVAL_MINUTES,
+    },
+    rules: {
+      dir: e.RULES_DIR,
+      build: e.RULES_BUILD,
     },
     defaultVariant: e.DEFAULT_GAME_VARIANT,
     logLevel: e.LOG_LEVEL,

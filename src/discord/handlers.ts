@@ -15,8 +15,10 @@ import type { ChatTurn, Oracle } from '../oracle.js';
 import type { GameRepo } from '../repo/sync.js';
 import { ASK, INFO } from './commands.js';
 import {
+  describeToolCall,
   footer,
   formatQuestion,
+  progressMessage,
   splitMessage,
   threadName,
   variantFromThreadName,
@@ -26,6 +28,8 @@ import { RateLimiter } from './rateLimit.js';
 
 const NO_MENTIONS = { parse: [] };
 const TYPING_INTERVAL_MS = 8_000;
+/** Minimum time between edits of the progress message (Discord rate-limits edits). */
+const PROGRESS_INTERVAL_MS = 3_000;
 const ERROR_REPLY = 'Sorry, something went wrong while answering. Please try again later.';
 
 export interface HandlerDeps {
@@ -47,17 +51,51 @@ export function registerHandlers(client: Client, deps: HandlerDeps): void {
   const retryText = (ms: number) =>
     `You're asking questions quickly; try again in ${Math.ceil(ms / 1000)}s.`;
 
-  /** Runs the oracle, keeps "typing…" visible, and posts the answer to `channel`. */
+  /**
+   * Runs the oracle and posts the answer to `channel`. While it works, a
+   * progress message shows the research steps; it is removed afterwards.
+   */
   async function answerInto(
     channel: SendableChannels | ThreadChannel,
     turns: ChatTurn[],
     variant: string | undefined,
     replyTo?: Message,
   ): Promise<void> {
+    const started = Date.now();
+    const steps: string[] = [];
+    const render = () => progressMessage(steps, Date.now() - started, deps.oracle.queueLength);
+    const progress = await channel
+      .send({ content: render(), allowedMentions: NO_MENTIONS })
+      .catch(() => undefined);
+
+    // Throttled edits: at most one per interval, always showing the latest steps.
+    let lastEdit = Date.now();
+    let editTimer: NodeJS.Timeout | undefined;
+    let done = false;
+    const flush = () => {
+      editTimer = undefined;
+      lastEdit = Date.now();
+      if (!done)
+        void progress?.edit({ content: render(), allowedMentions: NO_MENTIONS }).catch(() => {});
+    };
+    const scheduleEdit = () => {
+      if (editTimer || !progress) return;
+      editTimer = setTimeout(flush, Math.max(0, PROGRESS_INTERVAL_MS - (Date.now() - lastEdit)));
+    };
+    // Keeps the elapsed time moving during long model calls.
+    const heartbeat = setInterval(scheduleEdit, 15_000);
+
     await channel.sendTyping().catch(() => {});
     const typing = setInterval(() => void channel.sendTyping().catch(() => {}), TYPING_INTERVAL_MS);
     try {
-      const result = await deps.oracle.ask({ turns, variant });
+      const result = await deps.oracle.ask({
+        turns,
+        variant,
+        onToolCall: (name, args) => {
+          steps.push(describeToolCall(name, args));
+          scheduleEdit();
+        },
+      });
       const chunks = splitMessage(result.text);
       const last = chunks.length - 1;
       chunks[last] += `\n${footer({
@@ -66,14 +104,23 @@ export function registerHandlers(client: Client, deps: HandlerDeps): void {
         repoUrl: deps.config.repo.url,
         commit: result.commit,
       })}`;
+      done = true;
       for (const [i, content] of chunks.entries()) {
         if (i === 0 && replyTo) await replyTo.reply({ content, allowedMentions: NO_MENTIONS });
         else await channel.send({ content, allowedMentions: NO_MENTIONS });
       }
+      await progress?.delete().catch(() => {});
     } catch (err) {
+      done = true;
       logger.error({ err }, 'Failed to answer question');
-      await channel.send({ content: ERROR_REPLY, allowedMentions: NO_MENTIONS }).catch(() => {});
+      const failed = progress
+        ? progress.edit({ content: ERROR_REPLY, allowedMentions: NO_MENTIONS })
+        : channel.send({ content: ERROR_REPLY, allowedMentions: NO_MENTIONS });
+      await failed.catch(() => {});
     } finally {
+      done = true;
+      clearTimeout(editTimer);
+      clearInterval(heartbeat);
       clearInterval(typing);
     }
   }

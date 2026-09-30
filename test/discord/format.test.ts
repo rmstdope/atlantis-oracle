@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
+  describeToolCall,
   footer,
+  progressMessage,
   formatQuestion,
   parseQuestion,
   splitMessage,
@@ -72,5 +74,47 @@ describe('threadName', () => {
     expect(variantFromThreadName(name)).toBe('neworigins');
     expect(variantFromThreadName(threadName('x · y', 'standard'))).toBe('standard');
     expect(variantFromThreadName('renamed by a moderator')).toBeUndefined();
+  });
+});
+
+describe('describeToolCall', () => {
+  it('describes each tool in player terms', () => {
+    expect(describeToolCall('search_rules', '{"pattern":"tactics"}')).toBe(
+      'Searching the rules for “tactics”',
+    );
+    expect(describeToolCall('read_rules', '{"section":"Combat"}')).toBe(
+      'Reading the rules: “Combat”',
+    );
+    expect(describeToolCall('read_rules', '{}')).toBe('Reading the rules’ table of contents');
+    expect(describeToolCall('search_code', '{"pattern":"S_TACTICS"}')).toBe(
+      'Searching the code for “S_TACTICS”',
+    );
+    expect(describeToolCall('read_file', '{"path":"battle.cpp"}')).toBe('Reading `battle.cpp`');
+    expect(describeToolCall('list_dir', '{}')).toBe('Browsing `.`');
+    expect(describeToolCall('find_definition', '{"queries":["a","b","c","d","e"]}')).toBe(
+      'Looking up a, b, c and 2 more',
+    );
+    expect(describeToolCall('find_definition', 'not json')).toBe('Looking up game data');
+    expect(describeToolCall('other', '{}')).toBe('Using other');
+  });
+});
+
+describe('progressMessage', () => {
+  it('shows elapsed time and the latest steps', () => {
+    expect(progressMessage([], 4_000)).toBe('🔎 Researching… (4s)');
+    const steps = Array.from({ length: 7 }, (_, i) => `step ${i + 1}`);
+    expect(progressMessage(steps, 125_000)).toBe(
+      [
+        '🔎 Researching… (2m 05s)',
+        '-# … 2 earlier steps',
+        ...steps.slice(2).map((s) => `-# ${s}`),
+      ].join('\n'),
+    );
+  });
+
+  it('shows the queue before research starts', () => {
+    expect(progressMessage([], 0, 1)).toBe('⏳ Waiting for 1 question ahead of yours…');
+    expect(progressMessage([], 0, 3)).toBe('⏳ Waiting for 3 questions ahead of yours…');
+    expect(progressMessage(['s'], 0, 3)).toMatch(/^🔎/);
   });
 });

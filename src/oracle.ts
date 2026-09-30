@@ -6,7 +6,8 @@ import type { LlmClient } from './llm/client.js';
 import { Limiter } from './llm/limiter.js';
 import { buildSystemPrompt } from './llm/prompts.js';
 import type { GameRepo } from './repo/sync.js';
-import { defaultTools, type Tool } from './tools/index.js';
+import type { RulesStore } from './rules/store.js';
+import { codeTools, rulesTools, type Tool } from './tools/index.js';
 
 export interface ChatTurn {
   role: 'user' | 'assistant';
@@ -21,6 +22,14 @@ export interface AskInput {
   onToolCall?: (name: string, args: string) => void;
 }
 
+export interface OracleDeps {
+  config: Config;
+  repo: GameRepo;
+  rules: RulesStore;
+  llm: LlmClient;
+  logger: Logger;
+}
+
 export interface AskResult extends AgentResult {
   variant: string;
   commit: string;
@@ -30,15 +39,19 @@ export interface AskResult extends AgentResult {
 /** Answers questions about the game: the part of the bot that is independent of Discord. */
 export class Oracle {
   private readonly limiter: Limiter;
+  private readonly config: Config;
+  private readonly repo: GameRepo;
+  private readonly rules: RulesStore;
+  private readonly llm: LlmClient;
+  private readonly logger: Logger;
 
-  constructor(
-    private readonly config: Config,
-    private readonly repo: GameRepo,
-    private readonly llm: LlmClient,
-    private readonly logger: Logger,
-    private readonly tools: Tool[] = defaultTools,
-  ) {
-    this.limiter = new Limiter(config.llm.maxConcurrent);
+  constructor(deps: OracleDeps) {
+    this.config = deps.config;
+    this.repo = deps.repo;
+    this.rules = deps.rules;
+    this.llm = deps.llm;
+    this.logger = deps.logger;
+    this.limiter = new Limiter(this.config.llm.maxConcurrent);
   }
 
   /** Questions waiting for an LLM slot. */
@@ -55,6 +68,8 @@ export class Oracle {
   async ask(input: AskInput): Promise<AskResult> {
     const variant = this.resolveVariant(input.variant);
     const commit = this.repo.commit;
+    const hasRules = this.rules.get(variant) !== undefined;
+    const tools: Tool[] = hasRules ? [...rulesTools, ...codeTools] : codeTools;
     const messages: ChatCompletionMessageParam[] = [
       {
         role: 'system',
@@ -63,6 +78,7 @@ export class Oracle {
           commit,
           variant,
           variants: this.repo.variants,
+          hasRules,
         }),
       },
       ...input.turns,
@@ -76,8 +92,9 @@ export class Oracle {
         temperature: this.config.llm.temperature,
         maxIterations: this.config.llm.maxToolIterations,
         messages,
-        tools: this.tools,
-        toolContext: { root: this.repo.dir },
+        tools,
+        firstTools: rulesTools.map((t) => t.name),
+        toolContext: { root: this.repo.dir, variant, rules: this.rules },
         signal: input.signal,
         onToolCall: input.onToolCall,
       }),
