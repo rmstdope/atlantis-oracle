@@ -22,8 +22,12 @@ export interface Score {
   pass: boolean;
 }
 
+/** Models write minus signs and hyphens as various Unicode dashes; patterns use '-'. */
+const normalize = (text: string) => text.replace(/[\u2010-\u2015\u2212]/g, '-');
+
 export function scoreAnswer(q: EvalQuestion, answer: string): Score {
-  const test = (p: string) => new RegExp(p, 'i').test(answer);
+  const text = normalize(answer);
+  const test = (p: string) => new RegExp(p, 'i').test(text);
   const missing = q.mustMention.filter((p) => !test(p));
   const forbidden = q.mustNotMention.filter(test);
   const recall = (q.mustMention.length - missing.length) / q.mustMention.length;

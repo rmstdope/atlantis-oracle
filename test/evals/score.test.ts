@@ -24,6 +24,13 @@ describe('scoreAnswer', () => {
     expect(scoreAnswer(q, 'It has 2800 hits.')).toMatchObject({ recall: 0, pass: false });
   });
 
+  it('treats Unicode dashes as hyphens', () => {
+    const dash: EvalQuestion = { ...q, mustMention: ['-2 to attack'] };
+    for (const d of ['\u2011', '\u2013', '\u2212']) {
+      expect(scoreAnswer(dash, `storm gives ${d}2 to attack`).pass).toBe(true);
+    }
+  });
+
   it('fails on forbidden claims even with full recall', () => {
     const s = scoreAnswer(q, '280, hellfire, and you Must Enter The Lair.');
     expect(s).toMatchObject({ recall: 1, forbidden: ['must enter the lair'], pass: false });

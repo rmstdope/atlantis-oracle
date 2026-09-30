@@ -23,6 +23,8 @@ interface EvalResult extends Score {
   toolCalls: number;
   hitIterationCap: boolean;
   review?: string;
+  /** Every tool call in order, e.g. "read_rules {\"section\":\"balrog\"}"; repeats marked. */
+  trace: string[];
   promptTokens: number;
   completionTokens: number;
   error?: string;
@@ -108,6 +110,9 @@ async function main(): Promise<void> {
         toolCalls: r.toolCalls.length,
         hitIterationCap: r.hitIterationCap,
         review: r.review,
+        trace: r.toolCalls.map(
+          (c) => `${c.repeat ? '(repeat) ' : c.ok ? '' : '(failed) '}${c.name} ${c.args}`,
+        ),
         promptTokens: r.usage.promptTokens,
         completionTokens: r.usage.completionTokens,
         ...scoreAnswer(q, r.text),
@@ -121,6 +126,7 @@ async function main(): Promise<void> {
         iterations: 0,
         toolCalls: 0,
         hitIterationCap: false,
+        trace: [],
         promptTokens: 0,
         completionTokens: 0,
         recall: 0,
