@@ -21,6 +21,8 @@ export interface LlmCallRecord {
   purpose: 'plan' | 'research' | 'answer' | 'review';
   ms: number;
   promptTokens: number;
+  /** Prompt tokens the server reused from its cache; low values on big prompts mean slow calls. */
+  cachedTokens: number;
   completionTokens: number;
   error?: string;
 }
@@ -158,6 +160,7 @@ export async function answerQuestion(opts: AgentOptions): Promise<AgentResult> {
         purpose,
         ms: Date.now() - started,
         promptTokens: 0,
+        cachedTokens: 0,
         completionTokens: 0,
         error: err instanceof Error ? err.message : String(err),
       });
@@ -167,6 +170,7 @@ export async function answerQuestion(opts: AgentOptions): Promise<AgentResult> {
       purpose,
       ms: Date.now() - started,
       promptTokens: res.usage?.prompt_tokens ?? 0,
+      cachedTokens: res.usage?.prompt_tokens_details?.cached_tokens ?? 0,
       completionTokens: res.usage?.completion_tokens ?? 0,
     });
     usage.promptTokens += res.usage?.prompt_tokens ?? 0;
