@@ -261,7 +261,10 @@ export async function answerQuestion(opts: AgentOptions): Promise<AgentResult> {
     }
     iterations++;
     messages.push({ role: 'user', content: FORCE_ANSWER_PROMPT });
-    return stripThinking((await complete(false, 'answer')).content ?? '');
+    const reply = await complete(false, 'answer');
+    // Servers return unfinished reasoning as plain content when max_tokens cuts
+    // it off, so a cut-off reply is never an answer the player should see.
+    return llmCalls.at(-1)?.truncated ? '' : stripThinking(reply.content ?? '');
   };
 
   /** The tool loop: returns the model's answer once it stops calling tools. */
@@ -295,6 +298,7 @@ export async function answerQuestion(opts: AgentOptions): Promise<AgentResult> {
           messages.push({ role: 'user', content: TRUNCATED_PROMPT });
           continue;
         }
+        if (llmCalls.at(-1)?.truncated) return ''; // cut off again: no usable answer
         if (!unlocked && !nudged) {
           // The model tried to answer from memory; ask it once to check the rules.
           nudged = true;

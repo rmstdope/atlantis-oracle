@@ -316,15 +316,23 @@ describe('runaway generations and round budget', () => {
     expect(r.llmCalls[0]!.truncated).toBe(true);
   });
 
-  it('asks again when an answer is cut off mid-way, and accepts the second reply', async () => {
+  it('asks again when an answer is cut off, and never sends cut-off text', async () => {
     const { llm, promise } = run([
       { content: 'The army needs 12 men because 280 / (1', truncated: true },
-      { content: 'Still cut', truncated: true },
+      { content: 'The user wants me to answer... let me synthesize', truncated: true },
     ]);
-    expect((await promise).text).toBe('Still cut');
+    expect((await promise).text).toBe(FALLBACK_ANSWER);
     expect(llm.requests[1]!.messages.at(-1)).toMatchObject({
       content: expect.stringMatching(/cut off/),
     });
+  });
+
+  it('does not send a cut-off forced answer', async () => {
+    const { promise } = run(
+      [callTools(['list_dir', {}]), { content: 'The user wants me to...', truncated: true }],
+      { maxIterations: 1 },
+    );
+    expect(await promise).toMatchObject({ text: FALLBACK_ANSWER, hitIterationCap: true });
   });
 
   it('keeps the draft when the review is cut off', async () => {
