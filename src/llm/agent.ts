@@ -16,6 +16,15 @@ export interface ToolCallRecord {
   repeat?: boolean;
 }
 
+/** One request to the LLM, for diagnosing slow or failing questions. */
+export interface LlmCallRecord {
+  purpose: 'plan' | 'research' | 'answer' | 'review';
+  ms: number;
+  promptTokens: number;
+  completionTokens: number;
+  error?: string;
+}
+
 /** What the review step did with the draft answer. */
 export type ReviewOutcome = 'approved' | 'revised' | 'researched';
 
@@ -27,6 +36,7 @@ export interface AgentResult {
   review?: ReviewOutcome;
   /** True when a failed LLM call during research was recovered by answering early. */
   recovered?: boolean;
+  llmCalls: LlmCallRecord[];
   usage: { promptTokens: number; completionTokens: number; cachedTokens: number };
 }
 
@@ -58,6 +68,17 @@ export interface AgentOptions {
   signal?: AbortSignal;
   onToolCall?: (name: string, args: string) => void;
   onPhase?: (phase: AgentPhase) => void;
+}
+
+/** Thrown when a question fails; carries what was done before the failure. */
+export class AgentError extends Error {
+  constructor(
+    cause: unknown,
+    readonly partial: Pick<AgentResult, 'toolCalls' | 'llmCalls' | 'usage' | 'iterations'>,
+  ) {
+    super(cause instanceof Error ? cause.message : String(cause), { cause });
+    this.name = 'AgentError';
+  }
 }
 
 export const FALLBACK_ANSWER =
@@ -114,20 +135,40 @@ export async function answerQuestion(opts: AgentOptions): Promise<AgentResult> {
   let iterations = 0;
   let hitIterationCap = false;
   let recovered = false;
+  const llmCalls: LlmCallRecord[] = [];
 
-  const complete = async (withTools: boolean) => {
-    const res = await opts.llm.complete(
-      {
-        model: opts.model,
-        messages,
-        temperature: opts.temperature,
-        ...(opts.topP !== undefined ? { top_p: opts.topP } : {}),
-        ...(withTools
-          ? { tools: unlocked ? allTools : firstOnly, tool_choice: 'auto' as const }
-          : {}),
-      },
-      opts.signal,
-    );
+  const complete = async (withTools: boolean, purpose: LlmCallRecord['purpose']) => {
+    const started = Date.now();
+    let res;
+    try {
+      res = await opts.llm.complete(
+        {
+          model: opts.model,
+          messages,
+          temperature: opts.temperature,
+          ...(opts.topP !== undefined ? { top_p: opts.topP } : {}),
+          ...(withTools
+            ? { tools: unlocked ? allTools : firstOnly, tool_choice: 'auto' as const }
+            : {}),
+        },
+        opts.signal,
+      );
+    } catch (err) {
+      llmCalls.push({
+        purpose,
+        ms: Date.now() - started,
+        promptTokens: 0,
+        completionTokens: 0,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      throw err;
+    }
+    llmCalls.push({
+      purpose,
+      ms: Date.now() - started,
+      promptTokens: res.usage?.prompt_tokens ?? 0,
+      completionTokens: res.usage?.completion_tokens ?? 0,
+    });
     usage.promptTokens += res.usage?.prompt_tokens ?? 0;
     usage.completionTokens += res.usage?.completion_tokens ?? 0;
     usage.cachedTokens += res.usage?.prompt_tokens_details?.cached_tokens ?? 0;
@@ -203,7 +244,7 @@ export async function answerQuestion(opts: AgentOptions): Promise<AgentResult> {
     }
     iterations++;
     messages.push({ role: 'user', content: FORCE_ANSWER_PROMPT });
-    return stripThinking((await complete(false)).content ?? '');
+    return stripThinking((await complete(false, 'answer')).content ?? '');
   };
 
   /** The tool loop: returns the model's answer once it stops calling tools. */
@@ -212,7 +253,7 @@ export async function answerQuestion(opts: AgentOptions): Promise<AgentResult> {
       iterations++;
       let message;
       try {
-        message = await complete(true);
+        message = await complete(true, 'research');
       } catch (err) {
         // Keep the research done so far instead of failing the whole question.
         if (opts.signal?.aborted || toolCalls.length === 0) throw err;
@@ -246,58 +287,68 @@ export async function answerQuestion(opts: AgentOptions): Promise<AgentResult> {
     return forceAnswer(false);
   };
 
-  if (opts.planStep) {
-    opts.onPhase?.('planning');
-    messages.push({ role: 'user', content: PLAN_PROMPT });
-    // The plan is an aid; a failed call just means researching without one.
-    const plan = await complete(false)
-      .then((m) => stripThinking(m.content ?? ''))
-      .catch(() => '');
-    if (plan) {
-      messages.push({ role: 'assistant', content: plan });
-      messages.push({ role: 'user', content: START_RESEARCH_PROMPT });
-    } else {
-      messages.pop(); // No usable plan; research without one.
+  const run = async (): Promise<AgentResult> => {
+    if (opts.planStep) {
+      opts.onPhase?.('planning');
+      messages.push({ role: 'user', content: PLAN_PROMPT });
+      // The plan is an aid; a failed call just means researching without one.
+      const plan = await complete(false, 'plan')
+        .then((m) => stripThinking(m.content ?? ''))
+        .catch(() => '');
+      if (plan) {
+        messages.push({ role: 'assistant', content: plan });
+        messages.push({ role: 'user', content: START_RESEARCH_PROMPT });
+      } else {
+        messages.pop(); // No usable plan; research without one.
+      }
     }
-  }
 
-  opts.onPhase?.('researching');
-  let text = await research(opts.maxIterations);
-  let review: ReviewOutcome | undefined;
+    opts.onPhase?.('researching');
+    let text = await research(opts.maxIterations);
+    let review: ReviewOutcome | undefined;
 
-  if (opts.reviewStep && text) {
-    opts.onPhase?.('reviewing');
-    messages.push({ role: 'assistant', content: text });
-    messages.push({ role: 'user', content: REVIEW_PROMPT });
-    // A failed review keeps the draft rather than losing the answer.
-    const verdict = await complete(false)
-      .then((m) => stripThinking(m.content ?? ''))
-      .catch(() => '');
-    const missing = /^RESEARCH:\s*([\s\S]*)$/i.exec(verdict);
-    if (missing) {
-      review = 'researched';
-      messages.push({ role: 'assistant', content: verdict });
-      messages.push({
-        role: 'user',
-        content: `Research what is missing: ${missing[1]!.trim()}\nThen write the complete final answer for the player.`,
-      });
-      opts.onPhase?.('researching');
-      text = (await research(opts.reviewResearchIterations ?? 6)) || text;
-    } else if (/^APPROVED\b/i.test(verdict) || !verdict) {
-      review = 'approved';
-    } else {
-      review = 'revised';
-      text = verdict;
+    if (opts.reviewStep && text) {
+      opts.onPhase?.('reviewing');
+      messages.push({ role: 'assistant', content: text });
+      messages.push({ role: 'user', content: REVIEW_PROMPT });
+      // A failed review keeps the draft rather than losing the answer.
+      const verdict = await complete(false, 'review')
+        .then((m) => stripThinking(m.content ?? ''))
+        .catch(() => '');
+      const missing = /^RESEARCH:\s*([\s\S]*)$/i.exec(verdict);
+      if (missing) {
+        review = 'researched';
+        messages.push({ role: 'assistant', content: verdict });
+        messages.push({
+          role: 'user',
+          content: `Research what is missing: ${missing[1]!.trim()}\nThen write the complete final answer for the player.`,
+        });
+        opts.onPhase?.('researching');
+        // The draft is complete; if the extra research fails, keep it.
+        text = (await research(opts.reviewResearchIterations ?? 6).catch(() => '')) || text;
+      } else if (/^APPROVED\b/i.test(verdict) || !verdict) {
+        review = 'approved';
+      } else {
+        review = 'revised';
+        text = verdict;
+      }
     }
-  }
 
-  return {
-    text: text || FALLBACK_ANSWER,
-    toolCalls,
-    iterations,
-    hitIterationCap,
-    review,
-    recovered,
-    usage,
+    return {
+      text: text || FALLBACK_ANSWER,
+      toolCalls,
+      iterations,
+      hitIterationCap,
+      review,
+      recovered,
+      llmCalls,
+      usage,
+    };
   };
+
+  try {
+    return await run();
+  } catch (err) {
+    throw new AgentError(err, { toolCalls, llmCalls, usage, iterations });
+  }
 }

@@ -123,6 +123,8 @@ export class Oracle {
           `${c.name}${c.ok ? '' : '!'} ${c.args}`.slice(0, 200),
         ),
         usage: result.usage,
+        llmCalls: result.llmCalls.length,
+        slowestLlmCallMs: Math.max(0, ...result.llmCalls.map((c) => c.ms)),
         ms,
       },
       'Answered question',

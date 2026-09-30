@@ -5,6 +5,7 @@ import path from 'node:path';
 import { parseArgs } from 'node:util';
 import { z } from 'zod';
 import { loadConfig } from '../config.js';
+import { AgentError, type LlmCallRecord } from '../llm/agent.js';
 import { createLlmClient } from '../llm/client.js';
 import { createLogger } from '../logger.js';
 import { Oracle } from '../oracle.js';
@@ -25,6 +26,8 @@ interface EvalResult extends Score {
   review?: string;
   /** Every tool call in order, e.g. "read_rules {\"section\":\"balrog\"}"; repeats marked. */
   trace: string[];
+  /** Every LLM request, e.g. "research 48s 31204+180 tokens". */
+  llmCalls: string[];
   promptTokens: number;
   completionTokens: number;
   error?: string;
@@ -50,6 +53,10 @@ async function previousReport(): Promise<Report | undefined> {
     return undefined;
   }
 }
+
+const describeLlmCall = (c: LlmCallRecord) =>
+  `${c.purpose} ${Math.round(c.ms / 1000)}s ${c.promptTokens}+${c.completionTokens} tokens` +
+  (c.error ? ` ERROR ${c.error}` : '');
 
 const pct = (x: number) => `${Math.round(x * 100)}%`;
 const secs = (ms: number) => `${(ms / 1000).toFixed(0)}s`;
@@ -95,6 +102,7 @@ async function main(): Promise<void> {
 
   for (const q of questions) {
     process.stderr.write(`▶ ${q.id} … `);
+    const started = Date.now();
     let result: EvalResult;
     try {
       const r = await oracle.ask({
@@ -113,22 +121,26 @@ async function main(): Promise<void> {
         trace: r.toolCalls.map(
           (c) => `${c.repeat ? '(repeat) ' : c.ok ? '' : '(failed) '}${c.name} ${c.args}`,
         ),
+        llmCalls: r.llmCalls.map(describeLlmCall),
         promptTokens: r.usage.promptTokens,
         completionTokens: r.usage.completionTokens,
         ...scoreAnswer(q, r.text),
       };
     } catch (err) {
+      // Keep what the agent did before failing; that is what explains the failure.
+      const partial = err instanceof AgentError ? err.partial : undefined;
       result = {
         id: q.id,
         tier: q.tier,
         answer: '',
-        ms: 0,
-        iterations: 0,
-        toolCalls: 0,
+        ms: Date.now() - started,
+        iterations: partial?.iterations ?? 0,
+        toolCalls: partial?.toolCalls.length ?? 0,
         hitIterationCap: false,
-        trace: [],
-        promptTokens: 0,
-        completionTokens: 0,
+        trace: partial?.toolCalls.map((c) => `${c.name} ${c.args}`) ?? [],
+        llmCalls: partial?.llmCalls.map(describeLlmCall) ?? [],
+        promptTokens: partial?.usage.promptTokens ?? 0,
+        completionTokens: partial?.usage.completionTokens ?? 0,
         recall: 0,
         missing: q.mustMention,
         forbidden: [],

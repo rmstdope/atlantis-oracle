@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   answerQuestion,
+  AgentError,
   FALLBACK_ANSWER,
   PLAN_PROMPT,
   REVIEW_PROMPT,
@@ -263,6 +264,39 @@ describe('failure recovery', () => {
     const b = run([reply('x')], { topP: 0.95 });
     await b.promise;
     expect(b.llm.requests[0]!.top_p).toBe(0.95);
+  });
+});
+
+describe('diagnostics', () => {
+  it('records every LLM call with its purpose and token counts', async () => {
+    const { promise } = run(
+      [reply('plan'), callTools(['list_dir', {}]), reply('answer'), reply('APPROVED')],
+      { planStep: true, reviewStep: true },
+    );
+    const r = await promise;
+    expect(r.llmCalls.map((c) => c.purpose)).toEqual(['plan', 'research', 'research', 'review']);
+    expect(r.llmCalls[0]).toMatchObject({ promptTokens: 10, completionTokens: 5 });
+    expect(r.llmCalls.every((c) => c.error === undefined)).toBe(true);
+  });
+
+  it('throws an AgentError carrying the work done before the failure', async () => {
+    const { promise } = run([callTools(['list_dir', {}]), fail('first'), fail('second')]);
+    const err = await promise.catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(AgentError);
+    const partial = (err as AgentError).partial;
+    expect(partial.toolCalls.map((c) => c.name)).toEqual(['list_dir']);
+    expect(partial.llmCalls.map((c) => [c.purpose, c.error])).toEqual([
+      ['research', undefined],
+      ['research', 'first'],
+      ['answer', 'second'],
+    ]);
+  });
+
+  it('keeps the draft when the extra research requested by the review fails', async () => {
+    const { promise } = run([reply('draft'), reply('RESEARCH: more'), fail(), fail()], {
+      reviewStep: true,
+    });
+    expect(await promise).toMatchObject({ text: 'draft', review: 'researched' });
   });
 });
 
