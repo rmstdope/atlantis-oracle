@@ -68,6 +68,19 @@ describe('GameRepo', () => {
     expect(repo.branch).toBe('dev');
   });
 
+  it('loads an existing clone without syncing', async () => {
+    await makeRepo().sync();
+    const repo = makeRepo();
+    await repo.loadExisting();
+    expect(repo.commit).toBe(git(origin, 'rev-parse', 'HEAD'));
+    expect(repo.variants).toEqual(['standard']);
+    expect(repo.lastSyncedAt).toBeUndefined();
+  });
+
+  it('refuses to load a missing clone', async () => {
+    await expect(makeRepo().loadExisting()).rejects.toThrow(/sync it first/);
+  });
+
   it('serializes concurrent syncs', async () => {
     const repo = makeRepo();
     await Promise.all([repo.sync(), repo.sync()]);

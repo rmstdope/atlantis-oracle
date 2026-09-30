@@ -65,6 +65,20 @@ export class GameRepo {
     return () => clearInterval(timer);
   }
 
+  /** Uses an existing clone as-is, without contacting the remote. */
+  async loadExisting(): Promise<void> {
+    if (!(await exists(path.join(this.dir, '.git')))) {
+      throw new Error(`No game repository at ${this.dir}; sync it first.`);
+    }
+    await this.readState();
+  }
+
+  private async readState(): Promise<void> {
+    this.commit = await git(['rev-parse', 'HEAD'], this.dir);
+    this.branch = this.cfg.branch ?? (await git(['rev-parse', '--abbrev-ref', 'HEAD'], this.dir));
+    this.variants = await discoverVariants(this.dir);
+  }
+
   private async doSync(): Promise<void> {
     if (!(await exists(path.join(this.dir, '.git')))) {
       this.logger.info({ url: this.cfg.url, dir: this.dir }, 'Cloning game repository');
@@ -79,9 +93,7 @@ export class GameRepo {
     }
 
     const previous = this.commit;
-    this.commit = await git(['rev-parse', 'HEAD'], this.dir);
-    this.branch = this.cfg.branch ?? (await git(['rev-parse', '--abbrev-ref', 'HEAD'], this.dir));
-    this.variants = await discoverVariants(this.dir);
+    await this.readState();
     this.lastSyncedAt = new Date();
     if (previous !== this.commit) {
       this.logger.info(
