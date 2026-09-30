@@ -92,12 +92,15 @@ export class GameRepo {
   }
 }
 
-/** Game variants are top-level directories containing a rules.cpp. */
+/**
+ * Game variants are top-level directories containing a rules.cpp, except test
+ * harnesses such as upstream's unittest/.
+ */
 export async function discoverVariants(dir: string): Promise<string[]> {
   const entries = await readdir(dir, { withFileTypes: true });
   const variants: string[] = [];
   for (const e of entries) {
-    if (e.isDirectory() && !e.name.startsWith('.')) {
+    if (e.isDirectory() && !e.name.startsWith('.') && !/test/i.test(e.name)) {
       if (await exists(path.join(dir, e.name, 'rules.cpp'))) variants.push(e.name);
     }
   }
