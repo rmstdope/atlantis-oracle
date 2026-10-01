@@ -116,6 +116,20 @@ const NO_TOOLS_PROMPT =
   'Tools are no longer available. Write your final answer to the player now, as text, ' +
   'using what you have already found.';
 
+const TOOL_MARKUP_PROMPT =
+  'Your last reply contained tool-call markup as plain text, so no tool was called. ' +
+  'Call tools through the tool interface, or write your answer for the player in plain text.';
+
+/**
+ * Tool-call syntax that a server failed to parse and returned as text, e.g.
+ * GLM's "<tool_call>search_code<arg_key>pattern</arg_key>..." via OpenRouter.
+ */
+export function looksLikeToolMarkup(text: string): boolean {
+  return /<\/?(tool_call|arg_key|arg_value|function_calls?|invoke)\b|<\|tool|<function=/i.test(
+    text,
+  );
+}
+
 const TRUNCATED_PROMPT =
   'Your last reply was cut off because it was too long. Answer now, concisely, from what you have found.';
 
@@ -322,8 +336,10 @@ export async function answerQuestion(opts: AgentOptions): Promise<AgentResult> {
         reply = await complete(false, 'answer', noThinking);
       }
       // Servers return unfinished reasoning as plain content when max_tokens cuts
-      // it off, so a cut-off reply is never an answer the player should see.
-      return llmCalls.at(-1)?.truncated ? '' : stripThinking(reply.content ?? '');
+      // it off, so a cut-off reply is never an answer the player should see; nor
+      // is unparsed tool-call markup.
+      const content = stripThinking(reply.content ?? '');
+      return llmCalls.at(-1)?.truncated || looksLikeToolMarkup(content) ? '' : content;
     };
     let failure: unknown;
     const text = await answer(false).catch((err: unknown) => {
@@ -342,6 +358,7 @@ export async function answerQuestion(opts: AgentOptions): Promise<AgentResult> {
   /** The tool loop: returns the model's answer once it stops calling tools. */
   const research = async (maxRounds: number): Promise<string> => {
     let cutOff = false;
+    let markupRetries = 0;
     for (let round = 1; round <= maxRounds; round++) {
       iterations++;
       let message;
@@ -371,6 +388,12 @@ export async function answerQuestion(opts: AgentOptions): Promise<AgentResult> {
           continue;
         }
         if (llmCalls.at(-1)?.truncated) return ''; // cut off again: no usable answer
+        if (looksLikeToolMarkup(content)) {
+          // Never an answer; tell the model, but don't echo the markup back to it.
+          if (markupRetries++ >= 2) return '';
+          messages.push({ role: 'user', content: TOOL_MARKUP_PROMPT });
+          continue;
+        }
         if (!unlocked && !nudged) {
           // The model tried to answer from memory; ask it once to check the rules.
           nudged = true;

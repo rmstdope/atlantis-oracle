@@ -24,7 +24,9 @@ alters the layout or conventions below, update this file in the same change.
 
 - TypeScript (strict), Node.js ≥ 22, ESM modules
 - `discord.js` v14 for Discord
-- `openai` npm SDK, with `baseURL` from config. Use only the Chat Completions API
+- `openai` npm SDK, with `baseURL` from config, on `undici`'s fetch with an
+  `Agent` whose header/body timeouts match `LLM_REQUEST_TIMEOUT_SECONDS` (Node's
+  built-in fetch aborts after 300s without response headers). Use only the Chat Completions API
   with `tools`, because local servers widely support it (do **not** use the Responses API
   or other OpenAI-only features).
 - `zod` to validate configuration and tool arguments
@@ -140,7 +142,10 @@ test/                   mirrors src/; helpers/ has the fixture path and a script
    results and forces an answer from them instead of failing the question. A
    failed plan or review call is skipped. Every call sends `max_tokens`
    (`LLM_MAX_TOKENS`); a research reply cut off before any answer gets one
-   "answer concisely" retry. In `LLM_THINKING=final` mode, a forced answer whose
+   "answer concisely" retry. A reply containing unparsed tool-call markup as
+   text (seen with GLM via OpenRouter: `<tool_call>…<arg_key>…`) is never an
+   answer; the model is told to use the tool interface (up to 2 times). A failed
+   forced answer is retried once in any mode. In `LLM_THINKING=final` mode, a forced answer whose
    reasoning call fails or is cut off is asked again without reasoning. When 4 or fewer research rounds remain, the last
    tool result of each round tells the model how many are left.
    Each LLM call is recorded (`llmCalls`: purpose, time, prompt/cached/completion

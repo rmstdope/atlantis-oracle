@@ -19,11 +19,8 @@
       "spoils?",
       "(carry|capacity|weight|SPOILS)"
     ],
-    "mustNotMention": [
-      "(?<!\\bnot\\W{1,5})(must|need to|have to) (enter|move into) the lair",
-      "(?<!\\bnot\\W{1,5})(?<!wandering[^.]{0,60})(need|must have|requires?)[^.]{0,30}\\briding"
-    ],
-    "notes": "ATTACK only reaches units in the same region, so move there first. A monster inside a lair (any object except O_DUMMY) is always visible and always catchable: faction.cpp CanSee sets retval 1 for units in non-dummy objects, and CanCatch returns 1 for them, so stealth/observation and riding don't matter. Lairs cannot be entered and give no protection (ObjectDefs Lair/Cave protect 0). There is no separate lair loot: treasure comes as battle spoils, i.e. random silver up to the monster's silver value plus possibly a random item of its spoil type (army.cpp GetMonSpoils), plus about half of the items the dead carried (battle.cpp GetSpoils). Winners only pick up spoils they can carry, per the SPOILS order (unit.cpp CanGetSpoil). Earlier notes wrongly said see/catch checks could fail; the baseline answer was right."
+    "mustNotMention": ["(?<!\\bnot\\W{1,5})(must|need to|have to) (enter|move into) the lair"],
+    "notes": "ATTACK only reaches units in the same region, so move there first. A monster inside a lair (any object except O_DUMMY) is always visible and always catchable: faction.cpp CanSee sets retval 1 for units in non-dummy objects, and CanCatch returns 1 for them, so stealth/observation and riding don't matter. Lairs cannot be entered and give no protection (ObjectDefs Lair/Cave protect 0). There is no separate lair loot: treasure comes as battle spoils, i.e. random silver up to the monster's silver value plus possibly a random item of its spoil type (army.cpp GetMonSpoils), plus about half of the items the dead carried (battle.cpp GetSpoils). Winners only pick up spoils they can carry, per the SPOILS order (unit.cpp CanGetSpoil). Earlier notes wrongly said see/catch checks could fail; the baseline answer was right. A 'needs riding' forbidden pattern was dropped: it flagged two correct statements about wandering monsters and caught nothing wrong."
   },
   {
     "id": "ssto-defense",

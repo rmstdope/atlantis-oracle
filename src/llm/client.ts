@@ -1,4 +1,5 @@
 import OpenAI from 'openai';
+import { Agent, fetch as undiciFetch } from 'undici';
 import type {
   ChatCompletion,
   ChatCompletionCreateParamsNonStreaming,
@@ -14,11 +15,21 @@ export interface LlmClient {
 }
 
 export function createLlmClient(cfg: LlmConfig): LlmClient {
+  // Node's fetch gives up after 300s without response headers, whatever the SDK
+  // timeout says; non-streaming responses from slow servers can take longer.
+  const dispatcher = new Agent({
+    headersTimeout: cfg.requestTimeoutMs,
+    bodyTimeout: cfg.requestTimeoutMs,
+  });
   const openai = new OpenAI({
     baseURL: cfg.baseURL,
     apiKey: cfg.apiKey,
     timeout: cfg.requestTimeoutMs,
     maxRetries: cfg.maxRetries,
+    fetch: undiciFetch as unknown as typeof fetch,
+    fetchOptions: { dispatcher } as NonNullable<
+      ConstructorParameters<typeof OpenAI>[0]
+    >['fetchOptions'],
   });
   return {
     complete: (params, signal) => openai.chat.completions.create(params, { signal }),

@@ -5,6 +5,7 @@ import {
   FALLBACK_ANSWER,
   PLAN_PROMPT,
   REVIEW_PROMPT,
+  looksLikeToolMarkup,
   revisedAnswer,
   stripThinking,
   type AgentOptions,
@@ -619,6 +620,35 @@ describe('rules-first gating', () => {
     expect((await promise).text).toBe('answer');
     expect(names(llm.requests[0]!)).toHaveLength(4);
     expect(defaultTools.length).toBe(6);
+  });
+});
+
+describe('unparsed tool-call markup', () => {
+  const MARKUP =
+    '<tool_call>search_code<arg_key>pattern</arg_key><arg_value>free round</arg_value></tool_call>';
+
+  it('recognizes common tool-call syntaxes but not ordinary text', () => {
+    expect(looksLikeToolMarkup(MARKUP)).toBe(true);
+    expect(looksLikeToolMarkup('<function=search_code>{"pattern":"x"}</function>')).toBe(true);
+    expect(looksLikeToolMarkup('Tactics costs $200 and gives a free round.')).toBe(false);
+  });
+
+  it('asks the model to retry instead of answering with markup', async () => {
+    const { llm, promise } = run([reply(MARKUP), reply('Tactics costs $200.')]);
+    expect((await promise).text).toBe('Tactics costs $200.');
+    const last = llm.requests[1]!.messages;
+    expect(last.at(-1)).toMatchObject({ content: expect.stringMatching(/tool-call markup/) });
+    expect(last.some((m) => String(m.content).includes('<tool_call>'))).toBe(false);
+  });
+
+  it('gives up after repeated markup instead of sending it', async () => {
+    const { promise } = run([reply(MARKUP), reply(MARKUP), reply(MARKUP)]);
+    expect((await promise).text).toBe(FALLBACK_ANSWER);
+  });
+
+  it('never returns markup as a forced answer', async () => {
+    const { promise } = run([callTools(['list_dir', {}]), reply(MARKUP)], { maxIterations: 1 });
+    expect((await promise).text).toBe(FALLBACK_ANSWER);
   });
 });
 
