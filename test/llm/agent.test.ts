@@ -5,6 +5,7 @@ import {
   FALLBACK_ANSWER,
   PLAN_PROMPT,
   REVIEW_PROMPT,
+  revisedAnswer,
   stripThinking,
   type AgentOptions,
 } from '../../src/llm/agent.js';
@@ -179,6 +180,24 @@ describe('plan and review steps', () => {
       reviewStep: true,
     });
     expect(await promise).toMatchObject({ text: 'Better answer.', review: 'revised' });
+  });
+
+  it('keeps the critique out of a revised answer', async () => {
+    const { promise } = run(
+      [
+        reply('First draft.'),
+        reply("The draft's totals are off. Fixing.\n\nREVISED: Correct answer."),
+      ],
+      { reviewStep: true },
+    );
+    expect(await promise).toMatchObject({ text: 'Correct answer.', review: 'revised' });
+  });
+
+  it('keeps the draft when the review reply is only critique', async () => {
+    const { promise } = run([reply('First draft.'), reply('The draft looks fine to me.')], {
+      reviewStep: true,
+    });
+    expect(await promise).toMatchObject({ text: 'First draft.', review: 'approved' });
   });
 
   it('researches once more when the review finds gaps', async () => {
@@ -542,6 +561,29 @@ describe('rules-first gating', () => {
     expect((await promise).text).toBe('answer');
     expect(names(llm.requests[0]!)).toHaveLength(4);
     expect(defaultTools.length).toBe(6);
+  });
+});
+
+describe('revisedAnswer', () => {
+  it('takes the text after the REVISED marker', () => {
+    expect(revisedAnswer('The draft was vague.\n\nREVISED: **Balrog**: 280 hits.')).toBe(
+      '**Balrog**: 280 hits.',
+    );
+    expect(revisedAnswer('**REVISED:**\nFixed answer.')).toBe('Fixed answer.');
+  });
+
+  it('drops leading paragraphs about the draft when the marker is missing', () => {
+    const verdict =
+      "REVIEW: The draft's odds are right but its totals are inconsistent. Correcting.\n\n" +
+      '**Balrog** (Compendium): 280 hits.\n\nYou win at 50% losses.';
+    expect(revisedAnswer(verdict)).toBe(
+      '**Balrog** (Compendium): 280 hits.\n\nYou win at 50% losses.',
+    );
+    expect(revisedAnswer('A clean corrected answer.')).toBe('A clean corrected answer.');
+  });
+
+  it('returns nothing when the reply is only review talk', () => {
+    expect(revisedAnswer('The draft is mostly fine; my review found no gaps.')).toBe('');
   });
 });
 

@@ -141,7 +141,23 @@ export const REVIEW_PROMPT = `Review your draft answer above before it is sent t
 Reply with exactly one of:
 - APPROVED, if the draft needs no changes.
 - RESEARCH: <what is missing>, if essential facts are missing and can be looked up with the tools.
-- The complete corrected answer, otherwise. Write it for the player and do not mention this review.`;
+- REVISED: followed by the complete corrected answer, otherwise. Everything after REVISED: is sent to the player as it is, so write only the answer there and do not mention the draft or this review.`;
+
+/** Paragraphs about the review itself ("The draft's estimate is too vague..."). */
+const REVIEW_TALK = /\b(the|my|your) draft\b|\breview\b/i;
+
+/**
+ * Extracts the corrected answer from a review reply. Models often write their
+ * critique first; only the text after REVISED: (or, without the marker, after
+ * any leading paragraphs about the draft) is an answer for the player.
+ */
+export function revisedAnswer(verdict: string): string {
+  const marker = /(^|\n)\s*\**REVISED:?\**:?\s*/i.exec(verdict);
+  if (marker) return verdict.slice(marker.index + marker[0].length).trim();
+  const paragraphs = verdict.split(/\n\s*\n/);
+  while (paragraphs.length > 0 && REVIEW_TALK.test(paragraphs[0]!)) paragraphs.shift();
+  return paragraphs.join('\n\n').trim();
+}
 
 /** Removes reasoning blocks some local models put in their content. */
 export function stripThinking(text: string): string {
@@ -401,8 +417,10 @@ export async function answerQuestion(opts: AgentOptions): Promise<AgentResult> {
       } else if (/^APPROVED\b/i.test(verdict) || !verdict) {
         review = 'approved';
       } else {
-        review = 'revised';
-        text = verdict;
+        const revised = revisedAnswer(verdict);
+        // Nothing left after dropping review talk: keep the draft.
+        review = revised ? 'revised' : 'approved';
+        if (revised) text = revised;
       }
     }
 
