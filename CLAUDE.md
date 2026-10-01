@@ -140,7 +140,8 @@ test/                   mirrors src/; helpers/ has the fixture path and a script
    results and forces an answer from them instead of failing the question. A
    failed plan or review call is skipped. Every call sends `max_tokens`
    (`LLM_MAX_TOKENS`); a research reply cut off before any answer gets one
-   "answer concisely" retry. When 4 or fewer research rounds remain, the last
+   "answer concisely" retry. In `LLM_THINKING=final` mode, a forced answer whose
+   reasoning call fails or is cut off is asked again without reasoning. When 4 or fewer research rounds remain, the last
    tool result of each round tells the model how many are left.
    Each LLM call is recorded (`llmCalls`: purpose, time, prompt/cached/completion
    tokens, truncation, error); failures throw `AgentError` with the partial record. A call that repeats an earlier successful one (same tool and

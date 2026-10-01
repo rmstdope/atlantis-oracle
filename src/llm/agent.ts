@@ -185,9 +185,13 @@ export async function answerQuestion(opts: AgentOptions): Promise<AgentResult> {
   let recovered = false;
   const llmCalls: LlmCallRecord[] = [];
 
-  const complete = async (withTools: boolean, purpose: LlmCallRecord['purpose']) => {
+  const complete = async (
+    withTools: boolean,
+    purpose: LlmCallRecord['purpose'],
+    noThinking = false,
+  ) => {
     const started = Date.now();
-    const mode = opts.thinking ?? 'on';
+    const mode = noThinking ? 'off' : (opts.thinking ?? 'on');
     const thinking =
       mode === 'on' || (mode === 'final' && (purpose === 'answer' || purpose === 'review'));
     const maxTokens =
@@ -306,16 +310,29 @@ export async function answerQuestion(opts: AgentOptions): Promise<AgentResult> {
     }
     iterations++;
     messages.push({ role: 'user', content: FORCE_ANSWER_PROMPT });
-    let reply = await complete(false, 'answer');
-    if (!stripThinking(reply.content ?? '') && reply.tool_calls?.length) {
-      // Some models keep calling tools even when none are offered; say so once.
-      iterations++;
-      messages.push({ role: 'user', content: NO_TOOLS_PROMPT });
-      reply = await complete(false, 'answer');
-    }
-    // Servers return unfinished reasoning as plain content when max_tokens cuts
-    // it off, so a cut-off reply is never an answer the player should see.
-    return llmCalls.at(-1)?.truncated ? '' : stripThinking(reply.content ?? '');
+    // In 'final' mode this call reasons. If reasoning times out or runs past its
+    // token cap, a plain answer from the research beats no answer at all.
+    const reasoned = opts.thinking === 'final';
+    const answer = async (noThinking: boolean) => {
+      let reply = await complete(false, 'answer', noThinking);
+      if (!stripThinking(reply.content ?? '') && reply.tool_calls?.length) {
+        // Some models keep calling tools even when none are offered; say so once.
+        iterations++;
+        messages.push({ role: 'user', content: NO_TOOLS_PROMPT });
+        reply = await complete(false, 'answer', noThinking);
+      }
+      // Servers return unfinished reasoning as plain content when max_tokens cuts
+      // it off, so a cut-off reply is never an answer the player should see.
+      return llmCalls.at(-1)?.truncated ? '' : stripThinking(reply.content ?? '');
+    };
+    if (!reasoned) return answer(false);
+    const text = await answer(false).catch((err: unknown) => {
+      if (opts.signal?.aborted) throw err;
+      return '';
+    });
+    if (text) return text;
+    iterations++;
+    return answer(true);
   };
 
   /** The tool loop: returns the model's answer once it stops calling tools. */

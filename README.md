@@ -185,7 +185,7 @@ All configuration is done with environment variables, read from `.env` in develo
 | `LLM_REQUEST_TIMEOUT_SECONDS` | no | `120` | Timeout for each LLM request |
 | `LLM_MAX_RETRIES` | no | `2` | Retries per LLM request, timeouts included. Use `0` for local servers, where a timed-out request usually times out again. |
 | `LLM_MAX_TOKENS` | no | `4096` | Output cap per LLM request (`max_tokens`). Stops a looping model from blocking a question; a reply cut off before any answer gets one retry. |
-| `LLM_THINKING` | no | `on` | Reasoning ("thinking") for models that have it: `on` sends nothing (server default), `off` switches it off for every call, `final` switches it off while researching and on for the final answer and review. `off`/`final` send `chat_template_kwargs.enable_thinking`, which vLLM, SGLang and oMLX understand. |
+| `LLM_THINKING` | no | `on` | Reasoning ("thinking") for models that have it: `on` sends nothing (server default), `off` switches it off for every call, `final` switches it off while researching and on for the final answer and review (if that reasoning answer times out or is cut off, the bot asks once more without reasoning). `off`/`final` send `chat_template_kwargs.enable_thinking`, which vLLM, SGLang and oMLX understand. |
 | `LLM_FINAL_MAX_TOKENS` | no | `8192` | Output cap for the reasoning calls in `LLM_THINKING=final` mode |
 | `LLM_TOOL_OUTPUT_BUDGET` | no | `60000` | Total characters of tool output per question; protects the model's context window |
 | `LLM_PLAN_STEP` | no | `true` | Ask the model for a research plan before it starts looking things up |
@@ -210,14 +210,19 @@ multi-step questions room to finish. Check the effect on your setup with
 `npm run eval`.
 
 ```
+LLM_THINKING=final
 LLM_TEMPERATURE=0.6
 LLM_TOP_P=0.95
 LLM_MAX_TOOL_ITERATIONS=24
 LLM_TOOL_OUTPUT_BUDGET=150000
-LLM_REQUEST_TIMEOUT_SECONDS=600
+LLM_REQUEST_TIMEOUT_SECONDS=900
 LLM_MAX_RETRIES=0
 ```
 
+`LLM_THINKING=final` matters most. In the evals on Qwen3.8-27B (4-bit, oMLX),
+research rounds took 5-15 s each instead of minutes, and the reasoning
+review still caught real calculation errors. Its reasoning calls took 1.5-3
+minutes, and up to 9 minutes on the hardest question, hence the 900 s timeout.
 The model's context window must hold about 80k tokens with these settings.
 
 ### Choosing the branch

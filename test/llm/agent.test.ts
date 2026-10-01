@@ -448,6 +448,47 @@ describe('thinking control', () => {
   });
 });
 
+describe('final-mode fallback', () => {
+  const kwargs = (req: object) =>
+    (req as { chat_template_kwargs?: { enable_thinking: boolean } }).chat_template_kwargs
+      ?.enable_thinking;
+
+  it('answers without reasoning when the reasoning forced answer times out', async () => {
+    const { llm, promise } = run(
+      [callTools(['list_dir', {}]), fail('Request timed out.'), reply('Plain answer.')],
+      { maxIterations: 1, thinking: 'final' },
+    );
+    const r = await promise;
+    expect(r).toMatchObject({ text: 'Plain answer.', hitIterationCap: true });
+    expect(llm.requests.map(kwargs)).toEqual([false, true, false]);
+    expect(r.llmCalls.map((c) => [c.purpose, c.thinking, c.error])).toEqual([
+      ['research', false, undefined],
+      ['answer', true, 'Request timed out.'],
+      ['answer', false, undefined],
+    ]);
+  });
+
+  it('answers without reasoning when the reasoning forced answer is cut off', async () => {
+    const { promise } = run(
+      [
+        callTools(['list_dir', {}]),
+        { content: 'Let me think about the balrog', truncated: true },
+        reply('Plain answer.'),
+      ],
+      { maxIterations: 1, thinking: 'final' },
+    );
+    expect((await promise).text).toBe('Plain answer.');
+  });
+
+  it('does not add a fallback call outside final mode', async () => {
+    const { promise } = run([callTools(['list_dir', {}]), fail('Request timed out.')], {
+      maxIterations: 1,
+      thinking: 'off',
+    });
+    await expect(promise).rejects.toThrow('Request timed out.');
+  });
+});
+
 describe('loop guard', () => {
   it('answers repeated calls with a pointer to the earlier step', async () => {
     const { llm, promise } = run([
