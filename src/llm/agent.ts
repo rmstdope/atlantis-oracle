@@ -325,14 +325,18 @@ export async function answerQuestion(opts: AgentOptions): Promise<AgentResult> {
       // it off, so a cut-off reply is never an answer the player should see.
       return llmCalls.at(-1)?.truncated ? '' : stripThinking(reply.content ?? '');
     };
-    if (!reasoned) return answer(false);
+    let failure: unknown;
     const text = await answer(false).catch((err: unknown) => {
       if (opts.signal?.aborted) throw err;
+      failure = err;
       return '';
     });
     if (text) return text;
+    // One more try: a dropped connection or timeout ('terminated' on OpenRouter)
+    // should not throw away all the research. In 'final' mode it skips reasoning.
+    if (failure === undefined && !reasoned) return text;
     iterations++;
-    return answer(true);
+    return answer(reasoned);
   };
 
   /** The tool loop: returns the model's answer once it stops calling tools. */

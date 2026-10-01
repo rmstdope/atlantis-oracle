@@ -299,15 +299,23 @@ describe('diagnostics', () => {
   });
 
   it('throws an AgentError carrying the work done before the failure', async () => {
-    const { promise } = run([callTools(['list_dir', {}]), fail('first'), fail('second')]);
+    const { promise } = run([
+      callTools(['list_dir', {}]),
+      fail('first'),
+      fail('second'),
+      fail('third'),
+    ]);
     const err = await promise.catch((e: unknown) => e);
     expect(err).toBeInstanceOf(AgentError);
+    expect((err as AgentError).message).toBe('first');
     const partial = (err as AgentError).partial;
     expect(partial.toolCalls.map((c) => c.name)).toEqual(['list_dir']);
+    // The recovery's forced answer is tried twice before giving up.
     expect(partial.llmCalls.map((c) => [c.purpose, c.error])).toEqual([
       ['research', undefined],
       ['research', 'first'],
       ['answer', 'second'],
+      ['answer', 'third'],
     ]);
   });
 
@@ -480,12 +488,21 @@ describe('final-mode fallback', () => {
     expect((await promise).text).toBe('Plain answer.');
   });
 
-  it('does not add a fallback call outside final mode', async () => {
-    const { promise } = run([callTools(['list_dir', {}]), fail('Request timed out.')], {
-      maxIterations: 1,
-      thinking: 'off',
-    });
-    await expect(promise).rejects.toThrow('Request timed out.');
+  it('retries a failed forced answer once in any mode', async () => {
+    const { llm, promise } = run(
+      [callTools(['list_dir', {}]), fail('terminated'), reply('Answer after retry.')],
+      { maxIterations: 1, thinking: 'on' },
+    );
+    expect((await promise).text).toBe('Answer after retry.');
+    expect(llm.requests.map(kwargs)).toEqual([undefined, undefined, undefined]);
+  });
+
+  it('fails when the retry fails too', async () => {
+    const { promise } = run(
+      [callTools(['list_dir', {}]), fail('terminated'), fail('terminated again')],
+      { maxIterations: 1 },
+    );
+    await expect(promise).rejects.toThrow('terminated again');
   });
 });
 
