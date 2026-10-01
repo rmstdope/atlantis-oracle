@@ -646,9 +646,28 @@ describe('unparsed tool-call markup', () => {
     expect((await promise).text).toBe(FALLBACK_ANSWER);
   });
 
-  it('never returns markup as a forced answer', async () => {
-    const { promise } = run([callTools(['list_dir', {}]), reply(MARKUP)], { maxIterations: 1 });
-    expect((await promise).text).toBe(FALLBACK_ANSWER);
+  it('retries a forced answer written as markup, and never returns markup', async () => {
+    const ok = run([callTools(['list_dir', {}]), reply(MARKUP), reply('Final answer.')], {
+      maxIterations: 1,
+    });
+    expect((await ok.promise).text).toBe('Final answer.');
+    expect(ok.llm.requests[2]!.messages.at(-1)).toMatchObject({
+      content: expect.stringMatching(/Tools are no longer available/),
+    });
+    const bad = run([callTools(['list_dir', {}]), reply(MARKUP), reply(MARKUP)], {
+      maxIterations: 1,
+    });
+    expect((await bad.promise).text).toBe(FALLBACK_ANSWER);
+  });
+
+  it('ignores markup from the plan and the review', async () => {
+    const { llm, promise } = run([reply(MARKUP), reply('Draft answer.'), reply(MARKUP)], {
+      planStep: true,
+      reviewStep: true,
+    });
+    expect(await promise).toMatchObject({ text: 'Draft answer.', review: 'approved' });
+    // The markup plan was dropped, not added to the conversation.
+    expect(llm.requests[1]!.messages.map((m) => m.role)).toEqual(['system', 'user']);
   });
 });
 

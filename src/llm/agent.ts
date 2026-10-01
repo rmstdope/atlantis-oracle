@@ -329,8 +329,10 @@ export async function answerQuestion(opts: AgentOptions): Promise<AgentResult> {
     const reasoned = opts.thinking === 'final';
     const answer = async (noThinking: boolean) => {
       let reply = await complete(false, 'answer', noThinking);
-      if (!stripThinking(reply.content ?? '') && reply.tool_calls?.length) {
-        // Some models keep calling tools even when none are offered; say so once.
+      const first = stripThinking(reply.content ?? '');
+      if ((!first && reply.tool_calls?.length) || looksLikeToolMarkup(first)) {
+        // Some models keep calling tools even when none are offered, as real
+        // tool calls or as markup in the text; say so once.
         iterations++;
         messages.push({ role: 'user', content: NO_TOOLS_PROMPT });
         reply = await complete(false, 'answer', noThinking);
@@ -425,6 +427,7 @@ export async function answerQuestion(opts: AgentOptions): Promise<AgentResult> {
       // The plan is an aid; a failed call just means researching without one.
       const plan = await complete(false, 'plan')
         .then((m) => stripThinking(m.content ?? ''))
+        .then((p) => (looksLikeToolMarkup(p) ? '' : p))
         .catch(() => '');
       if (plan) {
         messages.push({ role: 'assistant', content: plan });
@@ -444,8 +447,10 @@ export async function answerQuestion(opts: AgentOptions): Promise<AgentResult> {
       messages.push({ role: 'user', content: REVIEW_PROMPT });
       // A failed review keeps the draft rather than losing the answer.
       // A cut-off review is half-finished reasoning, not an answer: keep the draft.
+      // Tool-call markup instead of a verdict is no verdict either.
       const verdict = await complete(false, 'review')
         .then((m) => (llmCalls.at(-1)?.truncated ? '' : stripThinking(m.content ?? '')))
+        .then((v) => (looksLikeToolMarkup(v) ? '' : v))
         .catch(() => '');
       const missing = /^RESEARCH:\s*([\s\S]*)$/i.exec(verdict);
       if (missing) {
