@@ -225,6 +225,32 @@ review still caught real calculation errors. Its reasoning calls took 1.5-3
 minutes, and up to 9 minutes on the hardest question, hence the 900 s timeout.
 The model's context window must hold about 80k tokens with these settings.
 
+### Suggested settings for GLM 5.3 Flash via OpenRouter
+
+GLM always reasons (OpenRouter rejects `reasoning: {enabled: false}` with HTTP
+400), but briefly, and it keeps the reasoning out of the answer. It finds the
+key facts early, so 12 rounds are enough; that halved the tokens per eval run
+(to about 0.56M prompt tokens) without losing facts. Its reasoning counts
+toward the output cap, so the cap must be generous.
+
+```
+LLM_MODEL=glm-5.3-flash
+OPENAI_BASE_URL=https://openrouter.ai/api/v1
+LLM_THINKING=on
+LLM_TEMPERATURE=0.6
+LLM_TOP_P=0.95
+LLM_MAX_TOOL_ITERATIONS=12
+LLM_MAX_TOKENS=16384
+LLM_TOOL_OUTPUT_BUDGET=150000
+LLM_REQUEST_TIMEOUT_SECONDS=180
+LLM_MAX_RETRIES=2
+```
+
+GLM via OpenRouter sometimes writes a tool call as plain text
+(`<tool_call>…<arg_key>…`) instead of calling the tool, especially in steps
+where no tools are offered. The bot detects this and never sends such text to
+players.
+
 ### Choosing the branch
 
 Upstream's default branch, `master`, is no longer where development happens;
