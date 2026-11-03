@@ -189,27 +189,44 @@ export function registerHandlers(client: Client, deps: HandlerDeps): void {
       });
       return;
     }
+    if (!channel.isSendable()) {
+      await interaction.reply({
+        content: 'The Collective cannot transmit in this channel.',
+        flags: MessageFlags.Ephemeral,
+      });
+      return;
+    }
+    // Acknowledge privately at once (Discord allows 3 seconds), then check at
+    // leisure: every refusal is a private edit, and the question only becomes
+    // public, as a channel message, once all checks have passed.
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    const refuse = (content: string) =>
+      interaction.editReply({ content, allowedMentions: NO_MENTIONS });
+
     // An answer thread belongs to its asker: others' questions would join that
-    // conversation. Checked before the rate limit and before anything public,
-    // so a refusal costs nothing and leaves no trace in the thread.
+    // conversation. Checked before the rate limit, so a refusal costs nothing.
     if (channel.isThread() && isAnswerThread(channel)) {
-      const askerId = await askerWithin(channel, ASKER_LOOKUP_MS);
+      const cached = askers.get(channel.id);
+      if (cached !== undefined) remember(channel.id, cached);
+      const askerId =
+        cached === undefined ? (await threadAsker(channel)).askerId : (cached ?? undefined);
       if (askerId !== interaction.user.id) {
-        await interaction.reply({
-          content: askerId
+        await refuse(
+          askerId
             ? 'This thread serves another drone. Use /ask in the channel to start your own.'
-            : 'The origin of this thread cannot be verified. Use /ask in the channel.',
-          flags: MessageFlags.Ephemeral,
-        });
+            : 'The origin of this thread cannot be verified. Repeat later, or use /ask in the channel.',
+        );
         return;
       }
     }
     const limit = rateLimiter.check(interaction.user.id);
     if (!limit.allowed) {
-      await interaction.reply({
-        content: retryText(limit.retryAfterMs),
-        flags: MessageFlags.Ephemeral,
-      });
+      await refuse(retryText(limit.retryAfterMs));
+      return;
+    }
+    const turns: ChatTurn[] = [{ role: 'user', content: question }];
+    if (!(await deps.oracle.screen(turns)).allowed) {
+      await refuse(OFF_TOPIC_REPLY);
       return;
     }
 
@@ -217,24 +234,17 @@ export function registerHandlers(client: Client, deps: HandlerDeps): void {
       interaction.options.getString('variant') ??
         (channel.isThread() ? variantFromThreadName(channel.name) : undefined),
     );
-    // The topic check takes longer than Discord's 3 seconds: defer first, and
-    // swap the public placeholder for a private reply if it rejects.
-    await interaction.deferReply();
-    const turns: ChatTurn[] = [{ role: 'user', content: question }];
-    if (!(await deps.oracle.screen(turns)).allowed) {
-      await replacePrivately(interaction, OFF_TOPIC_REPLY);
-      return;
-    }
-    const header = await interaction.editReply({
+    const header = await channel.send({
       content: formatQuestion(interaction.user.id, question),
       allowedMentions: NO_MENTIONS,
     });
+    // The private "thinking…" has done its job; the header is the reply now.
+    await interaction.deleteReply().catch(() => {});
 
     // Already in a thread (or a channel without threads): answer right here.
     const canThread =
       channel.type === ChannelType.GuildText || channel.type === ChannelType.GuildAnnouncement;
     if (!canThread) {
-      if (!channel.isSendable()) return;
       await answerInto(channel, turns, variant, header);
       return;
     }
@@ -247,7 +257,7 @@ export function registerHandlers(client: Client, deps: HandlerDeps): void {
       });
     } catch (err) {
       logger.warn({ err, channelId: channel.id }, 'Could not start a thread; answering inline');
-      if (channel.isSendable()) await answerInto(channel, turns, variant, header);
+      await answerInto(channel, turns, variant, header);
       return;
     }
     await answerInto(thread, turns, variant);
@@ -404,7 +414,7 @@ export function registerHandlers(client: Client, deps: HandlerDeps): void {
 
   /**
    * Asker per answer thread, so bystanders' messages are dropped without a
-   * fetch. `null` only when Discord said the starter message was deleted.
+   * fetch. `null`: the starter was deleted, or has no asker mention.
    */
   const askers = new Map<string, string | null>();
   const ASKER_CACHE_SIZE = 1000;
@@ -442,24 +452,9 @@ export function registerHandlers(client: Client, deps: HandlerDeps): void {
     }
     const askerId =
       starter.author.id === client.user?.id ? parseAsker(starter.content) : starter.author.id;
-    if (askerId) remember(thread.id, askerId);
+    // A header without a mention won't grow one: remember that as unknown too.
+    remember(thread.id, askerId ?? null);
     return { starter, askerId };
-  }
-
-  /** /ask must answer within 3 seconds: the cached asker, else a fetch with a time limit. */
-  const ASKER_LOOKUP_MS = 2_000;
-  async function askerWithin(thread: ThreadChannel, ms: number): Promise<string | undefined> {
-    const cached = askers.get(thread.id);
-    if (cached !== undefined) return cached ?? undefined;
-    let timer: NodeJS.Timeout | undefined;
-    const timeout = new Promise<undefined>((resolve) => {
-      timer = setTimeout(() => resolve(undefined), ms);
-    });
-    try {
-      return await Promise.race([threadAsker(thread).then((r) => r.askerId), timeout]);
-    } finally {
-      clearTimeout(timer);
-    }
   }
 
   async function handleThreadMessage(message: Message<true>, thread: ThreadChannel): Promise<void> {
@@ -467,6 +462,7 @@ export function registerHandlers(client: Client, deps: HandlerDeps): void {
     // Only the player who asked can continue; others may talk in the thread
     // without the bot answering or reading along.
     const cached = askers.get(thread.id);
+    if (cached !== undefined) remember(thread.id, cached); // keep active threads cached
     if (cached === null || (cached !== undefined && message.author.id !== cached)) return;
     const { starter, askerId } = await threadAsker(thread);
     if (!starter || !askerId || message.author.id !== askerId) return;

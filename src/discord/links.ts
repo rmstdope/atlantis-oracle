@@ -48,12 +48,12 @@ export function githubRepoLinks(repoUrl: string): LinkFilter {
   };
 }
 
-// Masked links whose target starts with a scheme (`https:` and also malformed
+// Masked links whose target is scheme-and-slash (`https://x`, and malformed
 // forms such as `https:/x` or `https:\\x`, which URL parsers repair), then
-// <angle> links, then any scheme://… URL. A target without a scheme, as in
-// code like `ItemDefs[i](y)` or a C++ lambda `[](int)`, is not a link.
+// <angle> links, then any scheme://… URL. Targets like `gamedata.cpp:1234`,
+// `Order::Move` or `y` (code such as `ItemDefs[i](y)`) are not links.
 const TOKENS =
-  /\[([^\]\n]*)\]\(\s*<?([a-z][a-z0-9+.-]*:[^()\s<>]*)>?\s*\)|<([a-z][a-z0-9+.-]*:\/\/[^\s<>]+)>|([a-z][a-z0-9+.-]*:\/\/[^\s<>`]+)/gi;
+  /\[([^\]\n]*)\]\(\s*<?([a-z][a-z0-9+.-]*:[/\\][^()\s<>]*)>?\s*\)|<([a-z][a-z0-9+.-]*:\/\/[^\s<>]+)>|([a-z][a-z0-9+.-]*:\/\/[^\s<>`]+)/gi;
 
 /** Linkifiers leave trailing punctuation out of a bare URL; so do we. */
 function splitTrailing(url: string): [string, string] {

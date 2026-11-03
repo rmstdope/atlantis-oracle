@@ -60,7 +60,9 @@ describe('neutralizeLinks', () => {
   });
 
   it('leaves code that only looks like a masked link alone', () => {
-    const code = '`ItemDefs[i](y)` and `auto f = [](int) { return 1; };`';
+    const code =
+      '`ItemDefs[i](y)`, `auto f = [](int) { return 1; };`, `handlers[k](Order::Move)` ' +
+      'and [ItemDefs](gamedata.cpp:1234)';
     expect(n(code)).toBe(code);
   });
 
