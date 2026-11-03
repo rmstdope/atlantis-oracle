@@ -291,17 +291,16 @@ export function registerHandlers(client: Client, deps: HandlerDeps): void {
         interaction.channelId,
         channel?.isThread() ? channel.parentId : null,
       ),
+      hudSiteUrl: config.hud.siteUrl,
       repoUrl: config.repo.url,
       branch: repo.branch,
       commit: repo.commit,
       syncedAt: repo.lastSyncedAt,
       variants: repo.variants,
       defaultVariant: config.defaultVariant,
-      model: config.llm.model,
-      llmHost: new URL(config.llm.baseURL).host,
       queueLength: deps.oracle.queueLength,
     });
-    // Long repo URLs, variant lists or model ids can push it past one message.
+    // Long repo URLs or variant lists can push it past one message.
     const [first, ...rest] = splitMessage(content);
     const options = { flags: MessageFlags.Ephemeral | NO_EMBEDS, allowedMentions: NO_MENTIONS };
     await interaction.reply({ ...options, content: first ?? '' });
