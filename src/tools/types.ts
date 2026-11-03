@@ -1,3 +1,4 @@
+import type { ResolvedGuide } from '../guide/store.js';
 import type { RulesDoc } from '../rules/store.js';
 import type { z } from 'zod';
 
@@ -8,6 +9,8 @@ export interface ToolContext {
   variant: string;
   /** Player rules per variant; absent when none could be built or found. */
   rules?: RulesLookup;
+  /** The code guide resolved for the current commit; present in guide lookup mode. */
+  guide?: ResolvedGuide;
 }
 
 /** The part of RulesStore the tools need. */

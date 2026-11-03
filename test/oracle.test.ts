@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { loadConfig } from '../src/config.js';
+import { GuideStore } from '../src/guide/store.js';
 import { Oracle } from '../src/oracle.js';
 import type { GameRepo } from '../src/repo/sync.js';
 import type { RulesDoc, RulesStore } from '../src/rules/store.js';
@@ -46,6 +47,55 @@ describe('Oracle', () => {
       'read_rules',
     ]);
     expect(llm.requests[0]!.messages[0]!.content).toContain('Always start with the player rules');
+  });
+
+  it('offers read_guide and lists the guide topics in guide mode', async () => {
+    const guideConfig = loadConfig({
+      OPENAI_API_KEY: 'k',
+      LLM_MODEL: 'm',
+      LLM_PLAN_STEP: 'false',
+      LLM_REVIEW_STEP: 'false',
+      LLM_LOOKUP_MODE: 'guide',
+    });
+    const guide = new GuideStore('test/fixtures/code-guide.md', silentLogger);
+    await guide.prepare(repo);
+    const llm = fakeLlm([reply('answer')]);
+    const oracle = new Oracle({
+      config: guideConfig,
+      repo,
+      rules,
+      guide,
+      llm,
+      logger: silentLogger,
+    });
+    const r = await oracle.ask({ turns: [{ role: 'user', content: 'q' }], variant: 'neworigins' });
+    expect(r.lookupMode).toBe('guide');
+    const names = llm.requests[0]!.tools!.map((t) => ('function' in t ? t.function.name : ''));
+    expect(names).toEqual([
+      'read_guide',
+      'search_code',
+      'read_file',
+      'list_dir',
+      'find_definition',
+    ]);
+    expect(llm.requests[0]!.messages[0]!.content).toContain('Guide topics: Items and data tables.');
+  });
+
+  it('falls back to grep lookup when guide mode has no guide', async () => {
+    const guideConfig = loadConfig({
+      OPENAI_API_KEY: 'k',
+      LLM_MODEL: 'm',
+      LLM_PLAN_STEP: 'false',
+      LLM_REVIEW_STEP: 'false',
+      LLM_LOOKUP_MODE: 'guide',
+    });
+    const llm = fakeLlm([reply('answer')]);
+    const oracle = new Oracle({ config: guideConfig, repo, rules, llm, logger: silentLogger });
+    const r = await oracle.ask({ turns: [{ role: 'user', content: 'q' }], variant: 'neworigins' });
+    expect(r.lookupMode).toBe('grep');
+    const names = llm.requests[0]!.tools!.map((t) => ('function' in t ? t.function.name : ''));
+    expect(names).toEqual(['search_code', 'read_file', 'list_dir', 'find_definition']);
+    expect(llm.requests[0]!.messages[0]!.content).toContain('Likely locations in the code');
   });
 
   it('offers code tools directly and passes the conversation when a variant has no rules', async () => {

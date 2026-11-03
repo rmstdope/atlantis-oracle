@@ -2,6 +2,7 @@ import type { ChatCompletionFunctionTool } from 'openai/resources/chat/completio
 import { z } from 'zod';
 import { PathError } from '../repo/paths.js';
 import { findDefinition } from './findDefinition.js';
+import { readGuide } from './guide.js';
 import { listDir } from './listDir.js';
 import { readFile } from './readFile.js';
 import { readRules, searchRules } from './rules.js';
@@ -15,6 +16,9 @@ export const rulesTools: Tool[] = [searchRules, readRules] as Tool[];
 
 /** Tools over the game source code. */
 export const codeTools: Tool[] = [searchCode, readFile, listDir, findDefinition] as Tool[];
+
+/** Code tools in guide lookup mode: the guide first, then the same code tools. */
+export const guideCodeTools: Tool[] = [readGuide as Tool, ...codeTools];
 
 export const defaultTools: Tool[] = [...rulesTools, ...codeTools];
 

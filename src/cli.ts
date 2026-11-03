@@ -1,19 +1,22 @@
 import 'dotenv/config';
 import { parseArgs } from 'node:util';
 import { loadConfig } from './config.js';
+import { GuideStore } from './guide/store.js';
 import { createLlmClient } from './llm/client.js';
 import { createLogger } from './logger.js';
 import { Oracle } from './oracle.js';
 import { GameRepo } from './repo/sync.js';
 import { RulesStore } from './rules/store.js';
 
-const USAGE = 'Usage: npm run ask -- [--variant <name>] [--no-sync] "<question>"';
+const USAGE =
+  'Usage: npm run ask -- [--variant <name>] [--mode grep|guide] [--no-sync] "<question>"';
 
 async function main(): Promise<void> {
   const { values, positionals } = parseArgs({
     allowPositionals: true,
     options: {
       variant: { type: 'string', short: 'v' },
+      mode: { type: 'string' },
       'no-sync': { type: 'boolean' },
       help: { type: 'boolean', short: 'h' },
     },
@@ -24,7 +27,9 @@ async function main(): Promise<void> {
     process.exit(values.help ? 0 : 1);
   }
 
-  const config = loadConfig();
+  const config = loadConfig(
+    values.mode ? { ...process.env, LLM_LOOKUP_MODE: values.mode } : undefined,
+  );
   const logger = createLogger(config.logLevel, 2);
   const repo = new GameRepo(config.repo, logger);
   if (values['no-sync']) {
@@ -35,8 +40,17 @@ async function main(): Promise<void> {
 
   const rules = new RulesStore(config.rules, logger);
   await rules.prepare(repo);
+  const guide = new GuideStore(config.guide.path, logger);
+  await guide.prepare(repo);
 
-  const oracle = new Oracle({ config, repo, rules, llm: createLlmClient(config.llm), logger });
+  const oracle = new Oracle({
+    config,
+    repo,
+    rules,
+    guide,
+    llm: createLlmClient(config.llm),
+    logger,
+  });
   const result = await oracle.ask({
     turns: [{ role: 'user', content: question }],
     variant: values.variant,
@@ -46,7 +60,7 @@ async function main(): Promise<void> {
 
   console.log(result.text);
   console.error(
-    `\n[${result.variant} @ ${result.commit.slice(0, 10)} · ${result.iterations} rounds · ` +
+    `\n[${result.variant} @ ${result.commit.slice(0, 10)} · ${result.lookupMode} lookup · ${result.iterations} rounds · ` +
       `${result.toolCalls.length} tool calls · ${result.usage.promptTokens}+${result.usage.completionTokens} tokens ` +
       `(${result.usage.cachedTokens} cached) · ` +
       `${(result.ms / 1000).toFixed(1)}s${result.hitIterationCap ? ' · hit iteration cap' : ''}` +

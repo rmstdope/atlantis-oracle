@@ -5,6 +5,7 @@ import path from 'node:path';
 import { parseArgs } from 'node:util';
 import { z } from 'zod';
 import { loadConfig } from '../config.js';
+import { GuideStore } from '../guide/store.js';
 import { AgentError, type LlmCallRecord } from '../llm/agent.js';
 import { createLlmClient } from '../llm/client.js';
 import { createLogger } from '../logger.js';
@@ -72,6 +73,7 @@ async function main(): Promise<void> {
       only: { type: 'string', multiple: true },
       tier: { type: 'string' },
       sync: { type: 'boolean' },
+      mode: { type: 'string' },
       questions: { type: 'string', default: 'evals/questions.json' },
     },
   });
@@ -84,14 +86,28 @@ async function main(): Promise<void> {
   );
   if (questions.length === 0) throw new Error('No questions selected');
 
-  const config = loadConfig();
+  const config = loadConfig(
+    values.mode ? { ...process.env, LLM_LOOKUP_MODE: values.mode } : undefined,
+  );
   const logger = createLogger(config.logLevel === 'debug' ? 'debug' : 'warn', 2);
   const repo = new GameRepo(config.repo, logger);
   if (values.sync) await repo.sync();
   else await repo.loadExisting();
   const rules = new RulesStore(config.rules, logger);
   await rules.prepare(repo);
-  const oracle = new Oracle({ config, repo, rules, llm: createLlmClient(config.llm), logger });
+  const guide = new GuideStore(config.guide.path, logger);
+  await guide.prepare(repo);
+  if (config.llm.lookupMode === 'guide' && !guide.get()) {
+    throw new Error(`--mode guide needs a code guide at ${config.guide.path}`);
+  }
+  const oracle = new Oracle({
+    config,
+    repo,
+    rules,
+    guide,
+    llm: createLlmClient(config.llm),
+    logger,
+  });
 
   const before = await previousReport();
   const report: Report = {
@@ -164,10 +180,12 @@ async function main(): Promise<void> {
   }
 
   console.log(
-    `\nModel ${report.model} · bot ${report.botCommit} · game ${report.gameCommit.slice(0, 10)}`,
+    `\nModel ${report.model} · ${config.llm.lookupMode} lookup · bot ${report.botCommit} · game ${report.gameCommit.slice(0, 10)}`,
   );
   if (before)
-    console.log(`Compared with ${before.startedAt} (bot ${before.botCommit}, ${before.model})`);
+    console.log(
+      `Compared with ${before.startedAt} (bot ${before.botCommit}, ${before.model}, ${String(before.settings.lookupMode ?? 'grep')} lookup)`,
+    );
   for (const r of report.results) {
     const prev = before?.results.find((p) => p.id === r.id);
     console.log(

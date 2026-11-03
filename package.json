@@ -18,7 +18,8 @@
     "typecheck": "tsc --noEmit",
     "register-commands": "tsx src/discord/register.ts",
     "ask": "tsx src/cli.ts",
-    "eval": "tsx src/evals/run.ts"
+    "eval": "tsx src/evals/run.ts",
+    "guide:check": "tsx src/guide/check.ts"
   },
   "dependencies": {
     "@vscode/ripgrep": "^1.18.0",

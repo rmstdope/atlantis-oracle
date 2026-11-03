@@ -1,5 +1,5 @@
 import type { ChatTurn } from '../oracle.js';
-import { parseQuestion } from './format.js';
+import { parseQuestion, STATUS_PREFIXES } from './format.js';
 
 /** The parts of a Discord message the history needs; keeps this module testable. */
 export interface HistoryMessage {
@@ -11,10 +11,8 @@ export interface HistoryMessage {
 const MAX_TURN_CHARS = 2000;
 export const HISTORY_LIMIT = 20;
 
-/** Progress messages from format.progressMessage; not part of the conversation. */
-const STATUS_PREFIXES = ['🔎 Researching', '⏳ Waiting'];
-
 function cleanBotMessage(content: string): string {
+  // Progress messages from format.progressMessage are not part of the conversation.
   if (STATUS_PREFIXES.some((p) => content.startsWith(p))) return '';
   return content
     .split('\n')

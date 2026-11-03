@@ -39,6 +39,22 @@ describe('buildTurns', () => {
     ]);
   });
 
+  it('ignores current and pre-rename progress messages mid-thread', () => {
+    const turns = buildTurns(BOT, undefined, [
+      msg('u1', 'q1'),
+      msg(BOT, '🟩 Assimilating knowledge… (3s)\n-# Scanning the rules for “x”'),
+      msg(BOT, '⏳ Your query is queued. 1 drone ahead of you…'),
+      msg(BOT, '🔎 Researching… (12s)'),
+      msg(BOT, 'a1\n-# model · standard · repo@abc · We are not infallible.'),
+      msg('u1', 'q2'),
+    ]);
+    expect(turns).toEqual([
+      { role: 'user', content: 'q1' },
+      { role: 'assistant', content: 'a1' },
+      { role: 'user', content: 'q2' },
+    ]);
+  });
+
   it('merges consecutive user messages from different users', () => {
     const turns = buildTurns(BOT, undefined, [msg('u1', 'a'), msg('u2', 'b')]);
     expect(turns).toEqual([{ role: 'user', content: 'a\n\nb' }]);

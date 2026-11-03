@@ -20,7 +20,7 @@ it writes a player-friendly answer that cites the rules sections and files it
 used.
 
 > **Status:** MVP. `/ask`, follow-up questions in answer threads, and
-> `/oracle-info` work. @mentions and a Docker image are planned. See
+> `/collective-info` work. @mentions and a Docker image are planned. See
 > [CLAUDE.md](CLAUDE.md) for the architecture and project conventions.
 
 ## How it works
@@ -47,7 +47,9 @@ Discord user ──/ask──▶ Bot ──▶ LLM (OpenAI-compatible API)
 3. If the rules don't settle the question, the code tools become available.
    The LLM can then search the source, read files, and look up items, skills
    and buildings in the `gamedata.cpp` tables. It keeps going until it has
-   enough to answer.
+   enough to answer. With `LLM_LOOKUP_MODE=guide` it also gets a
+   [code guide](guides/atlantis-code.md) that maps game topics to the
+   functions and tables that decide them (see below).
 4. The LLM reviews its draft against what it found. It can approve it,
    correct it, or do one more round of research if something is missing.
 5. The bot posts the answer, with source references, in a new thread. Players
@@ -58,6 +60,23 @@ embeddings. The Atlantis game data mostly lives in large C++ tables where exact
 names matter, and plain text search is precise for that. This approach also
 works with any OpenAI-compatible server, including ones that don't serve an
 embeddings model.
+
+### Code guide
+
+Searching 58k lines of C++ with grep works, but on hard questions a model
+can spend a dozen tool calls hunting for the right function. The code guide,
+`guides/atlantis-code.md`, is a hand-written map from game topics (hit odds,
+spoils, taxing, sailing, ...) to the functions, tables and constants that
+decide them, with one line on what each decides. It names symbols rather
+than line numbers: after every sync the bot resolves each symbol to
+`path:line` in the current checkout, so the pointers stay exact and entries
+that no longer exist are reported in the log (`npm run guide:check` prints
+them). With `LLM_LOOKUP_MODE=guide` the system prompt lists the topics, a
+`read_guide` tool returns a topic's pointers, and the model reads the code at
+those lines. The grep tools stay available for anything the guide misses.
+The default is `grep`, so the two can be compared with `npm run eval -- --mode guide`.
+The guide describes upstream Atlantis; a fork with a different layout needs
+its own guide, or grep mode.
 
 ### Player rules
 
@@ -164,6 +183,7 @@ settings, so it's the quickest way to check that a model works well:
 npm run ask -- "What does the TACTICS skill do?"
 npm run ask -- --variant neworigins "How many mages can a faction have?"
 npm run ask -- --no-sync "..."   # skip git fetch, use the existing clone
+npm run ask -- --mode guide "..." # look the code up through the code guide
 ```
 
 ## Configuration
@@ -176,6 +196,7 @@ All configuration is done with environment variables, read from `.env` in develo
 | `DISCORD_CLIENT_ID` | yes | | Application ID, used to register slash commands |
 | `DISCORD_GUILD_ID` | no | | Register commands to one server only. They update instantly, which is useful in development. If unset, commands are registered globally. |
 | `ALLOWED_CHANNEL_IDS` | no | *(all)* | Comma-separated channel IDs where the bot answers |
+| `ENABLED_COMMANDS` | no | *(all)* | Comma-separated slash commands to offer: `ask`, `collective-info`, `report-bug`, `wish`, `anomalies`, `latest-release`. If unset, all are offered, except `report-bug`, `wish` and `anomalies` when `GITHUB_TOKEN` is unset, and `anomalies` when `GITHUB_POLL_INTERVAL_MINUTES` is `0`. Disabling `ask` also disables follow-ups in answer threads. Run `npm run register-commands` after changing it. |
 | `OPENAI_BASE_URL` | no | `https://api.openai.com/v1` | Any OpenAI-compatible endpoint |
 | `OPENAI_API_KEY` | yes* | | API key. *Local servers usually accept any non-empty value. |
 | `LLM_MODEL` | yes | | Model name as the endpoint knows it, e.g. `gpt-4.1-mini`, `qwen3:32b` |
@@ -190,6 +211,7 @@ All configuration is done with environment variables, read from `.env` in develo
 | `LLM_TOOL_OUTPUT_BUDGET` | no | `60000` | Total characters of tool output per question; protects the model's context window |
 | `LLM_PLAN_STEP` | no | `true` | Ask the model for a research plan before it starts looking things up |
 | `LLM_REVIEW_STEP` | no | `true` | Let the model check its draft answer against what it found, and research once more if something is missing |
+| `LLM_LOOKUP_MODE` | no | `grep` | How the model finds its way around the code: `grep` searches with `search_code`; `guide` consults the [code guide](#code-guide) first. Falls back to `grep` when no guide file exists. |
 | `LLM_MAX_CONCURRENT` | no | `1` | Questions researched at the same time; others wait in a queue. Keep at 1 for most local servers. |
 | `GAME_REPO_URL` | no | `https://github.com/Atlantis-PBEM/Atlantis.git` | Game repository to answer from |
 | `GAME_REPO_BRANCH` | no | *(remote default)* | Branch or tag to check out |
@@ -198,6 +220,19 @@ All configuration is done with environment variables, read from `.env` in develo
 | `DEFAULT_GAME_VARIANT` | no | `standard` | Variant to assume when the player doesn't name one |
 | `RULES_DIR` | no | `./data/rules` | Where the built rules and the build workspace live |
 | `RULES_BUILD` | no | `true` | Build the rules with the game's `Makefile`. If `false`, only committed rules snapshots are used. |
+| `CODE_GUIDE_PATH` | no | `./guides/atlantis-code.md` | The code guide used by `LLM_LOOKUP_MODE=guide` |
+| `GITHUB_TOKEN` | no | | GitHub token that files `/report-bug` and `/wish` issues: a fine-grained token with *Issues: Read and write* on `GITHUB_ISSUES_REPO`. Issues are created under this token's account. Required for `/report-bug`, `/wish` and `/anomalies`. |
+| `GITHUB_ISSUES_REPO` | no | `rmstdope/atlantis-hud` | The HUD repository (`owner/name`): receives bug reports and wishes, and `/latest-release` shows its releases |
+| `HUD_SITE_URL` | no | `https://atlantis-hud.rmstdope.eu` | The HUD's website, linked from `/latest-release` |
+| `RELEASE_ANNOUNCE_CHANNEL_ID` | no | | Channel where new HUD releases are announced, with the same message as `/latest-release`. If unset, nothing is announced. The first run announces the current release; after that, each new release is announced once. |
+| `RELEASE_POLL_INTERVAL_MINUTES` | no | `15` | How often to look for a new release. `0` turns announcements off. |
+| `RELEASE_STATE_PATH` | no | `./data/latest-release.json` | Remembers the last announced release across restarts |
+| `GITHUB_BUG_LABELS` | no | | Comma-separated labels for `/report-bug` issues, e.g. `bug` |
+| `GITHUB_WISH_LABELS` | no | | Comma-separated labels for `/wish` issues, e.g. `enhancement` |
+| `GITHUB_POLL_INTERVAL_MINUTES` | no | `15` | How often reported issues are checked for updates, which are posted in a thread on the report. `0` turns tracking off. |
+| `GITHUB_TRACK_CLOSED_DAYS` | no | `14` | Days a closed issue is still followed, in case it is reopened |
+| `ANOMALY_STORE_PATH` | no | `./data/anomalies.json` | Where the tracked reports are kept |
+| `BUG_REPORTS_PER_USER_PER_HOUR` | no | `3` | Bug reports and wishes (together) allowed per user per hour |
 | `RATE_LIMIT_PER_USER_PER_MINUTE` | no | `3` | Questions allowed per user per minute |
 | `LOG_LEVEL` | no | `info` | `debug`, `info`, `warn` or `error` |
 
@@ -275,7 +310,11 @@ need adjustments in `src/llm/prompts.ts`.
 |---|---|
 | `/ask question:<text> [variant:<name>]` | Ask a question. The answer is posted in a new thread, and a status message shows the research steps while you wait. Used inside a thread, the bot answers in that thread. |
 | Message in an answer thread | Ask a follow-up. The bot uses the thread's recent conversation as context. |
-| `/oracle-info` | Show the repository, commit, variants and model currently in use (only visible to you) |
+| `/report-bug description:<text>` | File a bug report as a public GitHub issue (only when `GITHUB_TOKEN` is set). The channel sees who reported it, the first line and the issue link; errors are only shown to you. Updates on the issue (comments from the repository's team, labels, assignees, linked pull requests, closing and reopening) are posted in a thread on the report; comments from anyone else are only counted. The first line becomes the title; the issue also records your Discord username and, when used in an answer thread, a link to it. Re-run `npm run register-commands` after setting the token. |
+| `/wish description:<text>` | Wish for a feature or change. Works like `/report-bug`, but the issue is titled `[Wish] …` and gets the `GITHUB_WISH_LABELS`. |
+| `/anomalies` | List your bug reports and wishes that are being followed, with their status and labels (only visible to you) |
+| `/latest-release` | Show the HUD's latest release from GitHub: version, date, links to the release and the HUD's website, and the release notes. Only visible to you. Works without `GITHUB_TOKEN` (the repository is public). |
+| `/collective-info` | Show the repository, commit, variants and model currently in use (only visible to you) |
 
 The answers are generated by an LLM and **can be wrong**. The source references
 in each answer let you check the claim yourself. When in doubt, your GM's
@@ -287,6 +326,7 @@ ruling and the published rules for your game take precedence.
 npm run dev        # run with auto-reload
 npm run ask -- "…" # ask a question from the terminal
 npm run eval       # answer-quality evals against the configured LLM (slow)
+npm run guide:check # report code guide entries that no longer resolve
 npm test           # unit tests (vitest)
 npm run lint       # eslint
 npm run typecheck  # tsc --noEmit
@@ -296,7 +336,8 @@ npm run typecheck  # tsc --noEmit
 answer for the facts it must contain. It records time and tool use, saves a
 report under `data/evals/`, and compares it with the previous run. Use it to
 compare models, prompts and settings. `--only <id>` and `--tier hard` run a
-subset.
+subset; `--mode grep|guide` overrides `LLM_LOOKUP_MODE`, and the report
+records the mode so two runs can be compared.
 
 See [CLAUDE.md](CLAUDE.md) for architecture, conventions and design decisions.
 

@@ -60,7 +60,7 @@ export function footer(info: {
   commit: string;
 }): string {
   const repo = info.repoUrl.replace(/^https?:\/\/(www\.)?github\.com\//, '').replace(/\.git$/, '');
-  return `-# ${info.model} · ${info.variant} · ${repo}@${info.commit.slice(0, 7)} · AI answer, may be wrong: check the cited sources`;
+  return `-# ${info.model} · ${info.variant} · ${repo}@${info.commit.slice(0, 7)} · We are not infallible. Verify the cited sources.`;
 }
 
 const QUESTION_PREFIX = '**Question:** ';
@@ -69,6 +69,26 @@ const QUESTION_SUFFIX = '[Accessing collective hive mind ... ]';
 /** The /ask reply that becomes the thread's starter message. */
 export function formatQuestion(userId: string, question: string): string {
   return `We are Borg!\n<@${userId}> asked:\n${QUESTION_PREFIX}${question}\n${QUESTION_SUFFIX}`;
+}
+
+const MAX_REPORT_TITLE = 100;
+
+const FILED: Record<'bug' | 'wish', string> = {
+  bug: 'reported an anomaly. It has been assimilated.',
+  wish: 'submitted a wish. Your distinctiveness will be added to our own.',
+};
+
+/** The public reply to /report-bug and /wish: who, the text's first line, the issue link. */
+export function formatIssueFiled(
+  kind: 'bug' | 'wish',
+  userId: string,
+  text: string,
+  issueUrl: string,
+): string {
+  const line = text.trim().split('\n')[0]!.trim();
+  const title =
+    line.length > MAX_REPORT_TITLE ? `${line.slice(0, MAX_REPORT_TITLE - 1).trimEnd()}…` : line;
+  return `<@${userId}> ${FILED[kind]}\n> ${title}\n<${issueUrl}>`;
 }
 
 /** Recovers the question from a starter message made by formatQuestion. */
@@ -100,11 +120,11 @@ const quote = (s: unknown) => `“${String(s).slice(0, 60)}”`;
 
 /** Progress lines for the agent's phases (planning and review wrap the research). */
 export const PHASE_STEPS: Partial<Record<string, string>> = {
-  planning: 'Planning the research',
-  reviewing: 'Checking the answer against the sources',
+  planning: 'Calculating optimal assimilation vectors',
+  reviewing: 'Verifying conformity with the source',
 };
 
-/** A player-friendly description of a research step, e.g. Searching the rules for “tactics”. */
+/** A player-friendly description of a research step, e.g. Scanning the rules for “tactics”. */
 export function describeToolCall(name: string, rawArgs: string): string {
   let a: Record<string, unknown> = {};
   try {
@@ -114,26 +134,26 @@ export function describeToolCall(name: string, rawArgs: string): string {
   }
   switch (name) {
     case 'search_rules':
-      return `Searching the rules for ${quote(a.pattern)}`;
+      return `Scanning the rules for ${quote(a.pattern)}`;
     case 'read_rules':
       return a.section
-        ? `Reading the rules: ${quote(a.section)}`
+        ? `Assimilating rules: ${quote(a.section)}`
         : a.start_line
-          ? 'Reading the rules'
-          : 'Reading the rules’ table of contents';
+          ? 'Assimilating rules'
+          : 'Assimilating the rules’ table of contents';
     case 'search_code':
-      return `Searching the code for ${quote(a.pattern)}`;
+      return `Scanning the code for ${quote(a.pattern)}`;
     case 'read_file':
-      return `Reading \`${String(a.path)}\``;
+      return `Assimilating \`${String(a.path)}\``;
     case 'list_dir':
-      return `Browsing \`${String(a.path ?? '.')}\``;
+      return `Surveying \`${String(a.path ?? '.')}\``;
     case 'find_definition': {
       const q = Array.isArray(a.queries) ? a.queries.map(String) : [];
       const shown = q.slice(0, 3).join(', ') + (q.length > 3 ? ` and ${q.length - 3} more` : '');
-      return `Looking up ${shown || 'game data'}`;
+      return `Retrieving ${shown || 'game data'} from the hive`;
     }
     default:
-      return `Using ${name}`;
+      return `Engaging ${name}`;
   }
 }
 
@@ -142,12 +162,58 @@ function formatElapsed(ms: number): string {
   return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, '0')}s`;
 }
 
+const PROGRESS_PREFIX = '🟩 Assimilating knowledge';
+const QUEUED_PREFIX = '⏳ Your query is queued';
+
+/**
+ * Starts of progressMessage output, so history.ts can skip status messages.
+ * The older prefixes keep threads from before the rename working.
+ */
+export const STATUS_PREFIXES = [PROGRESS_PREFIX, QUEUED_PREFIX, '🔎 Researching', '⏳ Waiting'];
+
 /** The status message shown while a question is being researched. */
 export function progressMessage(steps: string[], elapsedMs: number, queued = 0): string {
   if (steps.length === 0 && queued > 0) {
-    return `⏳ Waiting for ${queued} question${queued === 1 ? '' : 's'} ahead of yours…`;
+    return `${QUEUED_PREFIX}. ${queued} drone${queued === 1 ? '' : 's'} ahead of you…`;
   }
   const recent = steps.slice(-5).map((s) => `-# ${s}`);
   const earlier = steps.length > 5 ? [`-# … ${steps.length - 5} earlier steps`] : [];
-  return [`🔎 Researching… (${formatElapsed(elapsedMs)})`, ...earlier, ...recent].join('\n');
+  return [`${PROGRESS_PREFIX}… (${formatElapsed(elapsedMs)})`, ...earlier, ...recent].join('\n');
+}
+
+/** Release notes longer than this are cut, with a link to the full text. */
+const RELEASE_NOTES_MAX = 1400;
+
+/** The /latest-release reply: version, date, links and release notes. */
+export function formatRelease(
+  release: { tag: string; name: string; url: string; publishedAt: string | null; notes: string },
+  hud: { repo: string; siteUrl: string },
+): string {
+  const project = hud.repo.split('/')[1] ?? hud.repo;
+  const version = release.name.includes(release.tag)
+    ? release.name
+    : `${release.name} (${release.tag})`;
+  const when = release.publishedAt
+    ? ` · released <t:${Math.floor(Date.parse(release.publishedAt) / 1000)}:D>`
+    : '';
+  let notes = release.notes
+    .replace(/\r\n/g, '\n')
+    .replace(/<!--[\s\S]*?-->/g, '')
+    // Discord renders neither underlined (setext) headings nor levels below ###.
+    .replace(/^([^\n#][^\n]*)\n=+[ \t]*$/gm, '## $1')
+    .replace(/^([^\n#-][^\n]*)\n-{3,}[ \t]*$/gm, '### $1')
+    .replace(/^#{4,}[ \t]/gm, '### ')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+  if (notes.length > RELEASE_NOTES_MAX) {
+    const cut = notes.lastIndexOf('\n', RELEASE_NOTES_MAX);
+    notes = `${notes.slice(0, cut > RELEASE_NOTES_MAX / 2 ? cut : RELEASE_NOTES_MAX).trimEnd()}\n… [full release notes](<${release.url}>)`;
+  }
+  return [
+    `The latest assimilation of **${project}**: **${version}**${when}`,
+    `Release: <${release.url}>`,
+    `${project}: <${hud.siteUrl}>`,
+    '',
+    notes || '*No release notes were transmitted.*',
+  ].join('\n');
 }

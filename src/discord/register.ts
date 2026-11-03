@@ -13,7 +13,7 @@ async function main(): Promise<void> {
 
   const repo = new GameRepo(config.repo, logger);
   await repo.sync();
-  const commands = buildCommands(repo.variants);
+  const commands = buildCommands(repo.variants, discord.commands);
 
   const rest = new REST().setToken(discord.token);
   const route = discord.guildId

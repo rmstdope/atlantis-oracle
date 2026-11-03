@@ -1,5 +1,6 @@
 import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions';
 import type { Config } from './config.js';
+import type { GuideStore } from './guide/store.js';
 import type { Logger } from './logger.js';
 import { answerQuestion, type AgentPhase, type AgentResult } from './llm/agent.js';
 import { findAbbreviations, glossaryNote } from './llm/glossary.js';
@@ -8,7 +9,8 @@ import { Limiter } from './llm/limiter.js';
 import { buildSystemPrompt } from './llm/prompts.js';
 import type { GameRepo } from './repo/sync.js';
 import type { RulesStore } from './rules/store.js';
-import { codeTools, rulesTools, type Tool } from './tools/index.js';
+import { codeTools, guideCodeTools, rulesTools, type Tool } from './tools/index.js';
+import { topicIndex } from './tools/guide.js';
 
 export interface ChatTurn {
   role: 'user' | 'assistant';
@@ -28,6 +30,8 @@ export interface OracleDeps {
   config: Config;
   repo: GameRepo;
   rules: RulesStore;
+  /** The code guide; needed for LLM_LOOKUP_MODE=guide. */
+  guide?: GuideStore;
   llm: LlmClient;
   logger: Logger;
 }
@@ -36,6 +40,8 @@ export interface AskResult extends AgentResult {
   variant: string;
   commit: string;
   ms: number;
+  /** The lookup mode actually used (guide falls back to grep without a guide). */
+  lookupMode: 'grep' | 'guide';
 }
 
 /** Answers questions about the game: the part of the bot that is independent of Discord. */
@@ -44,6 +50,7 @@ export class Oracle {
   private readonly config: Config;
   private readonly repo: GameRepo;
   private readonly rules: RulesStore;
+  private readonly guide: GuideStore | undefined;
   private readonly llm: LlmClient;
   private readonly logger: Logger;
 
@@ -51,6 +58,7 @@ export class Oracle {
     this.config = deps.config;
     this.repo = deps.repo;
     this.rules = deps.rules;
+    this.guide = deps.guide;
     this.llm = deps.llm;
     this.logger = deps.logger;
     this.limiter = new Limiter(this.config.llm.maxConcurrent);
@@ -71,7 +79,13 @@ export class Oracle {
     const variant = this.resolveVariant(input.variant);
     const commit = this.repo.commit;
     const hasRules = this.rules.get(variant) !== undefined;
-    const tools: Tool[] = hasRules ? [...rulesTools, ...codeTools] : codeTools;
+    const guide = this.config.llm.lookupMode === 'guide' ? this.guide?.get() : undefined;
+    if (this.config.llm.lookupMode === 'guide' && !guide) {
+      this.logger.warn('LLM_LOOKUP_MODE=guide but no code guide is loaded; using grep lookup');
+    }
+    const lookupMode = guide ? 'guide' : 'grep';
+    const code = guide ? guideCodeTools : codeTools;
+    const tools: Tool[] = hasRules ? [...rulesTools, ...code] : code;
     const question = input.turns.at(-1)?.content ?? '';
     const glossary = glossaryNote(await findAbbreviations(this.repo.dir, question));
     const messages: ChatCompletionMessageParam[] = [
@@ -84,6 +98,7 @@ export class Oracle {
           variants: this.repo.variants,
           hasRules,
           glossary,
+          guideTopics: guide ? topicIndex(guide) : undefined,
         }),
       },
       ...input.turns,
@@ -104,7 +119,7 @@ export class Oracle {
         messages,
         tools,
         firstTools: rulesTools.map((t) => t.name),
-        toolContext: { root: this.repo.dir, variant, rules: this.rules },
+        toolContext: { root: this.repo.dir, variant, rules: this.rules, guide },
         planStep: this.config.llm.planStep,
         reviewStep: this.config.llm.reviewStep,
         signal: input.signal,
@@ -118,6 +133,7 @@ export class Oracle {
       {
         question: input.turns.at(-1)?.content.slice(0, 200),
         variant,
+        lookupMode,
         iterations: result.iterations,
         hitIterationCap: result.hitIterationCap,
         review: result.review,
@@ -132,6 +148,6 @@ export class Oracle {
       },
       'Answered question',
     );
-    return { ...result, variant, commit, ms };
+    return { ...result, variant, commit, ms, lookupMode };
   }
 }

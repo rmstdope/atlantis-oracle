@@ -17,11 +17,38 @@ const commaList = z.preprocess(
   z.array(z.string()),
 );
 
+/** Slash commands the bot offers; ENABLED_COMMANDS picks a subset. */
+export const COMMAND_NAMES = [
+  'ask',
+  'collective-info',
+  'report-bug',
+  'wish',
+  'anomalies',
+  'latest-release',
+] as const;
+/** Commands that need GITHUB_TOKEN; `anomalies` also needs tracking switched on. */
+const GITHUB_COMMANDS: readonly CommandName[] = ['report-bug', 'wish', 'anomalies'];
+export type CommandName = (typeof COMMAND_NAMES)[number];
+
 const envSchema = z.object({
   DISCORD_TOKEN: optionalString,
   DISCORD_CLIENT_ID: optionalString,
   DISCORD_GUILD_ID: optionalString,
   ALLOWED_CHANNEL_IDS: commaList,
+  // Unset = every command whose requirements are configured.
+  ENABLED_COMMANDS: z.preprocess(
+    (v) => (typeof v === 'string' && v.trim() !== '' ? v : undefined),
+    z
+      .string()
+      .transform((v) =>
+        v
+          .split(',')
+          .map((s) => s.trim())
+          .filter(Boolean),
+      )
+      .pipe(z.array(z.enum(COMMAND_NAMES)).min(1))
+      .optional(),
+  ),
 
   OPENAI_BASE_URL: withDefault(z.url(), 'https://api.openai.com/v1'),
   OPENAI_API_KEY: z.string().min(1, 'OPENAI_API_KEY is required (any value for local servers)'),
@@ -41,6 +68,7 @@ const envSchema = z.object({
   LLM_MAX_CONCURRENT: withDefault(z.coerce.number().int().positive(), 1),
   LLM_PLAN_STEP: withDefault(z.stringbool(), 'true'),
   LLM_REVIEW_STEP: withDefault(z.stringbool(), 'true'),
+  LLM_LOOKUP_MODE: withDefault(z.enum(['grep', 'guide']), 'grep'),
 
   GAME_REPO_URL: withDefault(z.string().min(1), 'https://github.com/Atlantis-PBEM/Atlantis.git'),
   GAME_REPO_BRANCH: optionalString,
@@ -49,6 +77,23 @@ const envSchema = z.object({
   DEFAULT_GAME_VARIANT: withDefault(z.string().min(1), 'standard'),
   RULES_DIR: withDefault(z.string().min(1), './data/rules'),
   RULES_BUILD: withDefault(z.stringbool(), 'true'),
+  CODE_GUIDE_PATH: withDefault(z.string().min(1), './guides/atlantis-code.md'),
+
+  GITHUB_TOKEN: optionalString,
+  HUD_SITE_URL: withDefault(z.url(), 'https://atlantis-hud.rmstdope.eu'),
+  RELEASE_ANNOUNCE_CHANNEL_ID: optionalString,
+  RELEASE_POLL_INTERVAL_MINUTES: withDefault(z.coerce.number().min(0), 15),
+  RELEASE_STATE_PATH: withDefault(z.string().min(1), './data/latest-release.json'),
+  GITHUB_ISSUES_REPO: withDefault(
+    z.string().regex(/^[\w.-]+\/[\w.-]+$/, 'GITHUB_ISSUES_REPO must look like owner/name'),
+    'rmstdope/atlantis-hud',
+  ),
+  GITHUB_BUG_LABELS: commaList,
+  GITHUB_WISH_LABELS: commaList,
+  BUG_REPORTS_PER_USER_PER_HOUR: withDefault(z.coerce.number().int().positive(), 3),
+  GITHUB_POLL_INTERVAL_MINUTES: withDefault(z.coerce.number().min(0), 15),
+  GITHUB_TRACK_CLOSED_DAYS: withDefault(z.coerce.number().min(0), 14),
+  ANOMALY_STORE_PATH: withDefault(z.string().min(1), './data/anomalies.json'),
 
   RATE_LIMIT_PER_USER_PER_MINUTE: withDefault(z.coerce.number().int().positive(), 3),
   LOG_LEVEL: withDefault(z.enum(['debug', 'info', 'warn', 'error']), 'info'),
@@ -78,6 +123,11 @@ export interface LlmConfig {
   planStep: boolean;
   /** Review the draft answer against the research before sending it. */
   reviewStep: boolean;
+  /**
+   * How the model finds its way around the code: `grep` searches with
+   * search_code, `guide` consults the code guide (read_guide) first.
+   */
+  lookupMode: 'grep' | 'guide';
 }
 
 export interface RepoConfig {
@@ -94,22 +144,64 @@ export interface RulesConfig {
   build: boolean;
 }
 
+export interface GuideConfig {
+  /** The code guide Markdown file; missing file = guide lookup unavailable. */
+  path: string;
+}
+
+export interface GithubConfig {
+  /** Token whose owner files the issues (needs Issues: write on `repo`). */
+  token: string;
+  /** `owner/name` of the repository that receives bug reports. */
+  repo: string;
+  /** Labels for /report-bug issues. */
+  bugLabels: string[];
+  /** Labels for /wish issues. */
+  wishLabels: string[];
+  reportsPerUserPerHour: number;
+  /** How often reported issues are checked for updates; 0 = no tracking. */
+  pollIntervalMinutes: number;
+  /** Days a closed issue is still watched (it may be reopened). */
+  trackClosedDays: number;
+  /** JSON file with the tracked reports. */
+  storePath: string;
+}
+
+/** The HUD whose releases /latest-release shows. */
+export interface HudConfig {
+  /** `owner/name` on GitHub (GITHUB_ISSUES_REPO). */
+  repo: string;
+  siteUrl: string;
+  /** Channel that announces new releases; unset = no announcements. */
+  announceChannelId: string | undefined;
+  /** How often to look for a new release; 0 = never. */
+  pollIntervalMinutes: number;
+  /** JSON file remembering the last announced release. */
+  statePath: string;
+}
+
 export interface DiscordConfig {
   token: string;
   clientId: string;
   guildId: string | undefined;
   allowedChannelIds: string[];
   rateLimitPerUserPerMinute: number;
+  /** Slash commands to register and answer; thread follow-ups belong to `ask`. */
+  commands: CommandName[];
 }
 
 export interface Config {
   llm: LlmConfig;
   repo: RepoConfig;
   rules: RulesConfig;
+  guide: GuideConfig;
+  hud: HudConfig;
+  /** Bug reports to GitHub; undefined when GITHUB_TOKEN is unset. */
+  github: GithubConfig | undefined;
   defaultVariant: string;
   logLevel: 'debug' | 'info' | 'warn' | 'error';
   discord: Partial<DiscordConfig> &
-    Pick<DiscordConfig, 'allowedChannelIds' | 'rateLimitPerUserPerMinute'>;
+    Pick<DiscordConfig, 'allowedChannelIds' | 'rateLimitPerUserPerMinute' | 'commands'>;
 }
 
 export class ConfigError extends Error {}
@@ -121,6 +213,22 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     throw new ConfigError(`Invalid configuration:\n${issues.join('\n')}`);
   }
   const e = parsed.data;
+  const tracking = e.GITHUB_TOKEN !== undefined && e.GITHUB_POLL_INTERVAL_MINUTES > 0;
+  for (const c of e.ENABLED_COMMANDS ?? []) {
+    if (GITHUB_COMMANDS.includes(c) && !e.GITHUB_TOKEN) {
+      throw new ConfigError(`ENABLED_COMMANDS includes ${c}, but GITHUB_TOKEN is not set`);
+    }
+    if (c === 'anomalies' && !tracking) {
+      throw new ConfigError(
+        'ENABLED_COMMANDS includes anomalies, but GITHUB_POLL_INTERVAL_MINUTES is 0',
+      );
+    }
+  }
+  const commands =
+    e.ENABLED_COMMANDS ??
+    COMMAND_NAMES.filter((c) =>
+      c === 'anomalies' ? tracking : !GITHUB_COMMANDS.includes(c) || e.GITHUB_TOKEN !== undefined,
+    );
   return {
     llm: {
       baseURL: e.OPENAI_BASE_URL,
@@ -138,6 +246,7 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
       maxConcurrent: e.LLM_MAX_CONCURRENT,
       planStep: e.LLM_PLAN_STEP,
       reviewStep: e.LLM_REVIEW_STEP,
+      lookupMode: e.LLM_LOOKUP_MODE,
     },
     repo: {
       url: e.GAME_REPO_URL,
@@ -149,6 +258,28 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
       dir: e.RULES_DIR,
       build: e.RULES_BUILD,
     },
+    guide: {
+      path: e.CODE_GUIDE_PATH,
+    },
+    hud: {
+      repo: e.GITHUB_ISSUES_REPO,
+      siteUrl: e.HUD_SITE_URL,
+      announceChannelId: e.RELEASE_ANNOUNCE_CHANNEL_ID,
+      pollIntervalMinutes: e.RELEASE_POLL_INTERVAL_MINUTES,
+      statePath: e.RELEASE_STATE_PATH,
+    },
+    github: e.GITHUB_TOKEN
+      ? {
+          token: e.GITHUB_TOKEN,
+          repo: e.GITHUB_ISSUES_REPO,
+          bugLabels: e.GITHUB_BUG_LABELS,
+          wishLabels: e.GITHUB_WISH_LABELS,
+          reportsPerUserPerHour: e.BUG_REPORTS_PER_USER_PER_HOUR,
+          pollIntervalMinutes: e.GITHUB_POLL_INTERVAL_MINUTES,
+          trackClosedDays: e.GITHUB_TRACK_CLOSED_DAYS,
+          storePath: e.ANOMALY_STORE_PATH,
+        }
+      : undefined,
     defaultVariant: e.DEFAULT_GAME_VARIANT,
     logLevel: e.LOG_LEVEL,
     discord: {
@@ -157,6 +288,7 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
       guildId: e.DISCORD_GUILD_ID,
       allowedChannelIds: e.ALLOWED_CHANNEL_IDS,
       rateLimitPerUserPerMinute: e.RATE_LIMIT_PER_USER_PER_MINUTE,
+      commands: [...new Set(commands)],
     },
   };
 }

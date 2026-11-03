@@ -3,6 +3,8 @@ import {
   describeToolCall,
   footer,
   progressMessage,
+  formatIssueFiled,
+  formatRelease,
   formatQuestion,
   parseQuestion,
   splitMessage,
@@ -52,7 +54,7 @@ describe('footer', () => {
         commit: '63710e0532abcdef',
       }),
     ).toBe(
-      '-# qwen3 · standard · Atlantis-PBEM/Atlantis@63710e0 · AI answer, may be wrong: check the cited sources',
+      '-# qwen3 · standard · Atlantis-PBEM/Atlantis@63710e0 · We are not infallible. Verify the cited sources.',
     );
   });
 });
@@ -84,32 +86,36 @@ describe('threadName', () => {
 describe('describeToolCall', () => {
   it('describes each tool in player terms', () => {
     expect(describeToolCall('search_rules', '{"pattern":"tactics"}')).toBe(
-      'Searching the rules for “tactics”',
+      'Scanning the rules for “tactics”',
     );
     expect(describeToolCall('read_rules', '{"section":"Combat"}')).toBe(
-      'Reading the rules: “Combat”',
+      'Assimilating rules: “Combat”',
     );
-    expect(describeToolCall('read_rules', '{}')).toBe('Reading the rules’ table of contents');
+    expect(describeToolCall('read_rules', '{}')).toBe('Assimilating the rules’ table of contents');
     expect(describeToolCall('search_code', '{"pattern":"S_TACTICS"}')).toBe(
-      'Searching the code for “S_TACTICS”',
+      'Scanning the code for “S_TACTICS”',
     );
-    expect(describeToolCall('read_file', '{"path":"battle.cpp"}')).toBe('Reading `battle.cpp`');
-    expect(describeToolCall('list_dir', '{}')).toBe('Browsing `.`');
+    expect(describeToolCall('read_file', '{"path":"battle.cpp"}')).toBe(
+      'Assimilating `battle.cpp`',
+    );
+    expect(describeToolCall('list_dir', '{}')).toBe('Surveying `.`');
     expect(describeToolCall('find_definition', '{"queries":["a","b","c","d","e"]}')).toBe(
-      'Looking up a, b, c and 2 more',
+      'Retrieving a, b, c and 2 more from the hive',
     );
-    expect(describeToolCall('find_definition', 'not json')).toBe('Looking up game data');
-    expect(describeToolCall('other', '{}')).toBe('Using other');
+    expect(describeToolCall('find_definition', 'not json')).toBe(
+      'Retrieving game data from the hive',
+    );
+    expect(describeToolCall('other', '{}')).toBe('Engaging other');
   });
 });
 
 describe('progressMessage', () => {
   it('shows elapsed time and the latest steps', () => {
-    expect(progressMessage([], 4_000)).toBe('🔎 Researching… (4s)');
+    expect(progressMessage([], 4_000)).toBe('🟩 Assimilating knowledge… (4s)');
     const steps = Array.from({ length: 7 }, (_, i) => `step ${i + 1}`);
     expect(progressMessage(steps, 125_000)).toBe(
       [
-        '🔎 Researching… (2m 05s)',
+        '🟩 Assimilating knowledge… (2m 05s)',
         '-# … 2 earlier steps',
         ...steps.slice(2).map((s) => `-# ${s}`),
       ].join('\n'),
@@ -117,8 +123,77 @@ describe('progressMessage', () => {
   });
 
   it('shows the queue before research starts', () => {
-    expect(progressMessage([], 0, 1)).toBe('⏳ Waiting for 1 question ahead of yours…');
-    expect(progressMessage([], 0, 3)).toBe('⏳ Waiting for 3 questions ahead of yours…');
-    expect(progressMessage(['s'], 0, 3)).toMatch(/^🔎/);
+    expect(progressMessage([], 0, 1)).toBe('⏳ Your query is queued. 1 drone ahead of you…');
+    expect(progressMessage([], 0, 3)).toBe('⏳ Your query is queued. 3 drones ahead of you…');
+    expect(progressMessage(['s'], 0, 3)).toMatch(/^🟩/);
+  });
+});
+
+describe('formatIssueFiled', () => {
+  it('shows the reporter, the first line and the link', () => {
+    expect(formatIssueFiled('bug', '42', 'Wrong upkeep\nmore detail', 'https://gh/i/7')).toBe(
+      '<@42> reported an anomaly. It has been assimilated.\n> Wrong upkeep\n<https://gh/i/7>',
+    );
+  });
+
+  it('words wishes differently', () => {
+    expect(formatIssueFiled('wish', '42', 'Dark mode', 'u')).toBe(
+      '<@42> submitted a wish. Your distinctiveness will be added to our own.\n> Dark mode\n<u>',
+    );
+  });
+
+  it('shortens a long first line', () => {
+    const line = formatIssueFiled('bug', '42', 'x'.repeat(300), 'u').split('\n')[1]!;
+    expect(line).toBe(`> ${'x'.repeat(99)}…`);
+  });
+});
+
+describe('formatRelease', () => {
+  const hud = { repo: 'rmstdope/atlantis-hud', siteUrl: 'https://atlantis-hud.rmstdope.eu' };
+  const release = {
+    tag: 'v1.4.0',
+    name: 'v1.4.0',
+    url: 'https://github.com/rmstdope/atlantis-hud/releases/tag/v1.4.0',
+    publishedAt: '2026-10-30T12:00:00Z',
+    notes: '## Changes\r\n- Dark mode<!-- hidden -->\r\n\r\n\r\n\r\n- Faster map',
+  };
+
+  it('shows version, date, links and notes', () => {
+    expect(formatRelease(release, hud)).toBe(
+      [
+        'The latest assimilation of **atlantis-hud**: **v1.4.0** · released <t:1793361600:D>',
+        'Release: <https://github.com/rmstdope/atlantis-hud/releases/tag/v1.4.0>',
+        'atlantis-hud: <https://atlantis-hud.rmstdope.eu>',
+        '',
+        '## Changes\n- Dark mode\n\n- Faster map',
+      ].join('\n'),
+    );
+  });
+
+  it('turns headings into ones Discord renders', () => {
+    const notes = 'What is new\n===========\n\nFixes\n-----\n- one\n\n#### Details\n---\nend';
+    expect(
+      formatRelease({ ...release, notes }, hud)
+        .split('\n\n')
+        .slice(1)
+        .join('\n\n'),
+    ).toBe('## What is new\n\n### Fixes\n- one\n\n### Details\n---\nend');
+  });
+
+  it('names the tag next to a release title', () => {
+    expect(formatRelease({ ...release, name: 'Autumn update' }, hud)).toContain(
+      '**Autumn update (v1.4.0)**',
+    );
+  });
+
+  it('cuts long notes and links the full text', () => {
+    const notes = Array.from({ length: 300 }, (_, i) => `- change ${i}`).join('\n');
+    const text = formatRelease({ ...release, notes }, hud);
+    expect(text.length).toBeLessThan(1900);
+    expect(text).toMatch(/- change \d+\n… \[full release notes\]\(<https:.*v1\.4\.0>\)$/);
+  });
+
+  it('says when there are no notes', () => {
+    expect(formatRelease({ ...release, notes: '' }, hud)).toContain('No release notes');
   });
 });

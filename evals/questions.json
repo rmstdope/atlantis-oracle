@@ -75,5 +75,73 @@
     ],
     "mustNotMention": [],
     "notes": "standard/extra.cpp EnableItem calls. The spear is enabled by default already. Mushroom, healing potion, rough gem and gems are only enabled with underworld/underdeep levels, which standard sets to 0 (standard/rules.cpp)."
+  },
+  {
+    "id": "monster-attack-odds",
+    "tier": "hard",
+    "variant": "standard",
+    "question": "A balrog is wandering in the region where my units are. How likely is it to attack us this month, and what decides which unit it goes for?",
+    "mustMention": [
+      "\\b100\\b",
+      "\\b300\\b",
+      "(see|stealth|observation)",
+      "(catch|riding|fly|mount)",
+      "(men|people|size|larger unit)",
+      "(random|chance|odds|probab|propor)"
+    ],
+    "mustNotMention": [],
+    "notes": "runorders.cpp Game::CheckWMonAttack: each month a wandering monster that can attack counts the men it can see AND catch (CountWMonTars: only normal, mage and apprentice units; Unit::CanSee/CanCatch in faction.cpp, so stealth above the monster's observation or out-riding it keeps a unit safe). It attacks if getrandom(max(100, 300 - men)) < its hostile value, so the chance is hostile/(300 - men), capped at hostile/100; with 200 or more visible men a hostile-100 monster attacks for certain. The victim is picked by a random man among the targets (GetWMonTar), so bigger units are more likely to be attacked. Unit::Hostile (unit.cpp) returns the MonDefs hostile percent: the Balrog entry in gamedata.cpp MonDefs is {6,{6,6,6,6,5,0}, 200,280,0, 5,1,2, \"hellfire\",4, 25000,IT_MAGIC,100,1,\"Balrog\",\"BALR\"...}: silver 25000, hostile 100, number 1. Trap: the Compendium text ('the player must be pretty unlucky to be attacked') comes from MonType::getAggression in items.cpp, which multiplies hostile by MONSTER_ADVANCE_HOSTILE_PERCENT (0 in standard/rules.cpp) and floors at MONSTER_ADVANCE_MIN_PERCENT (15); that number governs advancing into regions, not the attack roll. A mustNotMention on 'rarely attack' was dropped: a correct answer may quote the Compendium wording before correcting it."
+  },
+  {
+    "id": "spoils-division",
+    "tier": "hard",
+    "variant": "standard",
+    "question": "After my army wins a battle, exactly how much of the enemy's stuff do we get and how is it split between my units?",
+    "mustMention": [
+      "(dead|died|killed|casualt|losses|lost)",
+      "(50 ?%|half)",
+      "(SPOILS|capacity|weight|carry)",
+      "(surviv|alive|living)",
+      "(random|propor|evenly|equal)"
+    ],
+    "mustNotMention": [
+      "(all|every|100 ?%)[^.]{0,30}(items|equipment|possessions) of the (dead|losers)"
+    ],
+    "notes": "battle.cpp Battle::GetSpoils: for every unit on the losing side, percent = dead/(alive+dead) of each item stack is removed from the unit (soldiers and incomplete ships excluded), and of that about half, (num + getrandom(2))/2, goes into the spoils pile; IT_ALWAYS_SPOIL items give the whole share, IT_NEVER_SPOIL items nothing. Silver has no special treatment (ItemDefs silver is IT_NORMAL|IT_MONEY, weight 0), so winners get roughly half the losers' silver times the losers' casualty fraction. Distribution in army.cpp Army::Lose/Win -> the spoils loop after DoHeal: for each item type a list of eligible units is built with one entry per surviving soldier (so shares are proportional to surviving men), filtered by Unit::CanGetSpoil (unit.cpp: weight-0 items always; FLAG_NOSPOILS takes nothing with weight; WALK/RIDE/FLY/SWIM/SAIL flags compare current load + item weight against the matching capacity, counting the capacity the item itself provides). Weightless items are handed out in equal chunks (num/ns), items with weight one at a time round-robin, and the remainder at random. Rules § Combat says 50% of the dead's items picked up at random in proportion to surviving men; the code detail is the casualty fraction applied to the whole losing unit's inventory and the per-soldier eligibility list."
+  },
+  {
+    "id": "tax-sharing",
+    "tier": "hard",
+    "variant": "standard",
+    "question": "If my unit and another faction's unit both TAX the same region in the same month, how is the money divided, and what caps how much each of us gets?",
+    "mustMention": [
+      "\\b50\\b",
+      "(propor|share|split|divid|per (taxing )?man|per taxer)",
+      "guard",
+      "(combat|weapon|bow|riding skill)",
+      "(wealth|taxable|population|wages)"
+    ],
+    "mustNotMention": [
+      "(first|earlier|earliest)[^.]{0,40}(come|served|priority|gets? (all|the full))"
+    ],
+    "notes": "unit.cpp Unit::Taxers: men count as taxers under WHO_CAN_TAX = TAX_NORMAL (TAX_COMBAT_SKILL | TAX_USABLE_WEAPON, standard/rules.cpp): any Combat skill, or a weapon they have the skill to use; each taxer is worth TAX_BASE_INCOME = 50 (TAX_BONUS_WEAPON/ARMOR/FORT are 0 in standard). runorders.cpp Game::CountTaxes rejects taxing when there is no population, a non-friendly unit is on guard (ARegion::CanTax, aregion.cpp: any guard with attitude <= neutral to you blocks), the faction is over its tax-region limit (ActivityCheck), or the unit has no taxers. Game::RunTaxRegion: desired = max(sum of all taxers' income, region wealth); each unit gets taxers * wealth / desired, i.e. the region's taxable wealth is shared in proportion to each unit's taxing men, no matter which faction or in which order; nobody gets more than 50 per taxing man. Region wealth (economy.cpp ARegion::SetupEconomy/UpdateEconomy) = Population * (Wages - 10*MAINTENANCE_COST) / 50, MAINTENANCE_COST = 10. PILLAGE runs before TAX and sets wealth to 0 (RunPillageRegion, ARegion::Pillage). Rules § Economy > Taxing/Pillaging say 'split evenly among all taxers', which matches the per-man proportional split."
+  },
+  {
+    "id": "assassin-ring",
+    "tier": "hard",
+    "variant": "standard",
+    "question": "My one-man assassin has Stealth 3 and a ring of invisibility. Who can stop the assassination, and what happens when it goes through?",
+    "mustMention": [
+      "\\b6\\b",
+      "(observation|OBSE)",
+      "amulet of true seeing|AMTS",
+      "(ally|allies|allied|guards?)",
+      "free round",
+      "(leather|cloth) armor"
+    ],
+    "mustNotMention": [
+      "(stealth|observation)[^.]{0,20}(equal|same|tie)[^.]{0,40}(hidden|unseen|not seen|safe)"
+    ],
+    "notes": "gamedata.cpp AttribDefs: ring of invisibility (RING) adds a constant 3 to stealth (one per man; USE_WORST), amulet of true seeing (AMTS) adds 2 to observation, so the assassin's effective stealth is 6. runorders.cpp Game::Do1Assassinate: the assassin must see the target (CanSee), the target must be a player unit (not city guards or monsters), the assassin must be a 1-man unit. Game::CanSeeSteal collects every faction present whose Faction::CanSee(assassin) is non-zero; CanSee (faction.cpp) returns 2 when a unit's observation is greater than the stealth and 1 when it is equal, so an observer with observation equal to the assassin's stealth already catches him. The attempt fails if the target's faction, a faction allied to the target, or the city guard faction (guardfaction) can see him; the seers are told who tried. HARDER_ASSASSINATION is 0 in standard/rules.cpp, so there is no stealth penalty for assassinating. With a ring, Unit::AmtsPreventCrime (unit.cpp) blocks the attempt if the target has at least one amulet per man (PROPORTIONAL_AMTS_USAGE is 0, so partial coverage never helps). On success Game::RunBattle(..., ass): battle.cpp Battle::FreeRound gives the assassin a free round, armies are built with the assassination flag so only armor usable in assassinations (leather and cloth) counts, spoils via GetSpoils with ass (a ring-bearing assassin cannot loot amulets). Rules § Stealth and Observation > Assassination cover the flow; the code adds the exact ring (+3), amulet (+2), equal-observation and amulet-per-man rules."
   }
 ]

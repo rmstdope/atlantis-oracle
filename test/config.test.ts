@@ -26,6 +26,83 @@ describe('loadConfig', () => {
     expect(c.defaultVariant).toBe('standard');
     expect(c.discord.allowedChannelIds).toEqual([]);
     expect(c.discord.rateLimitPerUserPerMinute).toBe(3);
+    expect(c.github).toBeUndefined();
+    expect(c.discord.commands).toEqual(['ask', 'collective-info', 'latest-release']);
+    expect(c.hud).toEqual({
+      repo: 'rmstdope/atlantis-hud',
+      siteUrl: 'https://atlantis-hud.rmstdope.eu',
+      announceChannelId: undefined,
+      pollIntervalMinutes: 15,
+      statePath: './data/latest-release.json',
+    });
+  });
+
+  it('parses ENABLED_COMMANDS', () => {
+    expect(loadConfig({ ...minimal, GITHUB_TOKEN: 't' }).discord.commands).toEqual([
+      'ask',
+      'collective-info',
+      'report-bug',
+      'wish',
+      'anomalies',
+      'latest-release',
+    ]);
+    // Without tracking there is nothing for /anomalies to list.
+    expect(
+      loadConfig({ ...minimal, GITHUB_TOKEN: 't', GITHUB_POLL_INTERVAL_MINUTES: '0' }).discord
+        .commands,
+    ).toEqual(['ask', 'collective-info', 'report-bug', 'wish', 'latest-release']);
+    expect(loadConfig({ ...minimal, ENABLED_COMMANDS: '' }).discord.commands).toEqual([
+      'ask',
+      'collective-info',
+      'latest-release',
+    ]);
+    const c = loadConfig({
+      ...minimal,
+      GITHUB_TOKEN: 't',
+      ENABLED_COMMANDS: ' report-bug, collective-info,report-bug ',
+    });
+    expect(c.discord.commands).toEqual(['report-bug', 'collective-info']);
+    expect(() => loadConfig({ ...minimal, ENABLED_COMMANDS: 'ask,nope' })).toThrow(ConfigError);
+    expect(() => loadConfig({ ...minimal, ENABLED_COMMANDS: ',' })).toThrow(ConfigError);
+    expect(() => loadConfig({ ...minimal, ENABLED_COMMANDS: 'report-bug' })).toThrow(
+      /GITHUB_TOKEN/,
+    );
+    expect(() => loadConfig({ ...minimal, ENABLED_COMMANDS: 'wish' })).toThrow(/GITHUB_TOKEN/);
+    expect(() =>
+      loadConfig({
+        ...minimal,
+        GITHUB_TOKEN: 't',
+        GITHUB_POLL_INTERVAL_MINUTES: '0',
+        ENABLED_COMMANDS: 'anomalies',
+      }),
+    ).toThrow(/GITHUB_POLL_INTERVAL_MINUTES/);
+  });
+
+  it('enables GitHub bug reports only with a token', () => {
+    expect(loadConfig({ ...minimal, GITHUB_ISSUES_REPO: 'o/r' }).github).toBeUndefined();
+    expect(loadConfig({ ...minimal, GITHUB_TOKEN: 't' }).github?.repo).toBe(
+      'rmstdope/atlantis-hud',
+    );
+    const c = loadConfig({
+      ...minimal,
+      GITHUB_TOKEN: 't',
+      GITHUB_ISSUES_REPO: 'owner/repo.name',
+      GITHUB_BUG_LABELS: 'bug, discord',
+      GITHUB_WISH_LABELS: 'enhancement',
+    });
+    expect(c.github).toEqual({
+      token: 't',
+      repo: 'owner/repo.name',
+      bugLabels: ['bug', 'discord'],
+      wishLabels: ['enhancement'],
+      reportsPerUserPerHour: 3,
+      pollIntervalMinutes: 15,
+      trackClosedDays: 14,
+      storePath: './data/anomalies.json',
+    });
+    expect(() => loadConfig({ ...minimal, GITHUB_ISSUES_REPO: 'https://github.com/o/r' })).toThrow(
+      ConfigError,
+    );
   });
 
   it('treats empty strings as unset', () => {

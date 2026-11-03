@@ -15,7 +15,7 @@ The LLM backend must stay swappable: hosted OpenAI, or a local server such as
 Ollama, llama.cpp, vLLM or LM Studio. This is a core requirement, not an extra
 (see "LLM portability" below).
 
-Status: MVP. `/ask`, thread follow-ups and `/oracle-info` work. Planned next:
+Status: MVP. `/ask`, thread follow-ups, `/collective-info`, `/report-bug`, `/wish`, `/anomalies` and `/latest-release` work. Planned next:
 @mention entry point, Docker image, an evals harness, and turning `path:line`
 citations into GitHub links. Keep this file in sync with the code: if a change
 alters the layout or conventions below, update this file in the same change.
@@ -50,8 +50,9 @@ npm run lint                # eslint .
 npm run format              # prettier --write . (markdown is excluded)
 npm run typecheck           # tsc --noEmit
 npm run register-commands   # push slash command definitions to Discord
-npm run ask -- [--variant x] [--no-sync] "question"   # agent without Discord
-npm run eval -- [--only <id>] [--tier hard] [--sync]  # answer-quality evals (slow, uses the LLM)
+npm run ask -- [--variant x] [--mode grep|guide] [--no-sync] "question"   # agent without Discord
+npm run eval -- [--only <id>] [--tier hard] [--mode grep|guide] [--sync]  # answer-quality evals (slow, uses the LLM)
+npm run guide:check         # report code guide entries that no longer resolve in the checkout
 ```
 
 Before calling a task done, run `npm run typecheck && npm run lint && npm test`
@@ -65,15 +66,17 @@ src/
   cli.ts                `npm run ask`
   config.ts             zod schema for all env vars; the only place process.env is read
   logger.ts
-  oracle.ts             Oracle: system prompt + agent + concurrency limit; used by CLI and Discord
+  oracle.ts             Oracle: system prompt + agent + concurrency limit + lookup mode; used by CLI and Discord
   discord/
     client.ts           discord.js client (intents, allowedMentions: none)
-    commands.ts         slash command definitions (/ask, /oracle-info)
+    commands.ts         slash command definitions (/ask, /collective-info, /report-bug, /wish, /anomalies, /latest-release), filtered by ENABLED_COMMANDS
     register.ts         script behind `npm run register-commands`
-    handlers.ts         /ask, /oracle-info and thread follow-ups -> Oracle
+    handlers.ts         all slash commands and thread follow-ups -> Oracle
     format.ts           message splitting, footer, question header, thread name <-> variant
     history.ts          rebuilds conversation turns from a Discord thread
     rateLimit.ts        per-user sliding window
+    releases.ts         posts new-release announcements in RELEASE_ANNOUNCE_CHANNEL_ID
+    anomalies.ts        Borg wording of issue updates (anomaly or wish), /anomalies list; posts updates in a thread on the report
   llm/
     client.ts           LlmClient interface + OpenAI SDK implementation
     agent.ts            tool-calling loop (the core of the bot)
@@ -84,6 +87,14 @@ src/
   repo/
     sync.ts             GameRepo: clone, fetch + hard reset, commit, variant discovery
     paths.ts            resolves and sandboxes paths inside GAME_REPO_DIR
+  github/
+    client.ts           GitHub REST on fetch: create issue, changed issues (ETag), issue, timeline,
+                        latest release (token optional; retried anonymously if refused)
+    issues.ts           /report-bug and /wish: issue title ([Bug]/[Wish]) and body, neutralizes @mentions
+    store.ts            AnomalyStore: tracked reports in one JSON file (zod-checked, atomic save)
+    releases.ts         ReleaseWatcher: latest release (10-min cache) for /latest-release; announces
+                        new ones through an Announce callback, last one kept in RELEASE_STATE_PATH
+    tracker.ts          AnomalyTracker: polls changed issues, diffs timelines, hands updates to a Deliver callback
   rules/
     build.ts            builds rules HTML: git archive -> make GAME=<v> -> <v> genrules,
                         then compiles and runs native/compendium.cpp against the engine objects
@@ -91,6 +102,9 @@ src/
     markdown.ts         rules HTML -> Markdown, heading extraction
     store.ts            RulesStore: per-variant rules (+ compendium), cached per commit and
                         FORMAT version, snapshot fallback
+  guide/
+    store.ts            code guide: parses guides/*.md, resolves symbols to path:line per commit
+    check.ts            `npm run guide:check`
   evals/
     score.ts            eval question schema and fact-recall scorer
     run.ts              `npm run eval`: asks evals/questions.json, writes data/evals/*.json
@@ -103,6 +117,9 @@ src/
     rules.ts            search_rules, read_rules
     gamedata.ts         parser for gamedata.cpp tables and gamedata.h enums
     findDefinition.ts   looks up a table entry by name, abbreviation or enum constant
+    guide.ts            read_guide: topic lookup in the resolved code guide (guide mode only)
+guides/
+  atlantis-code.md      the code guide: game topics -> deciding symbols, hand-written, symbol-anchored
 native/
   compendium.cpp        prints the engine's player-facing descriptions (ItemDescription,
                         ShowSkill::Report, ObjectDescription) for every enabled entry
@@ -174,7 +191,32 @@ it), and a handler that returns **plain text**.
 | `search_code` | ripgrep for a regex/literal, optional path glob; returns `path:line: text` with limited context |
 | `read_file` | read `path` from `start_line` to `end_line` (default 150, max 300 lines per call) |
 | `list_dir` | list a directory within the repo |
+| `read_guide` | guide mode only: list the code guide's topics (no args) or return one topic's entries as `path:line symbol: what it decides`, resolved against the current commit; entries whose symbol is gone say so |
 | `find_definition` | look up one or more (`queries`, max 25) items, skills, objects, terrain etc. in `gamedata.cpp` by name, tag or enum (e.g. `TACT`, `plate armor`, `I_PLATEARMOR`). Reports the enum constant, "disabled by default" status and the lines in `<variant>/extra.cpp` that change the entry; full entries with the field legend for up to 4 matches, one summary line each beyond that |
+
+### Code lookup modes
+
+`LLM_LOOKUP_MODE` selects how the model navigates the code; both modes keep
+the same rules-first flow and the same code tools.
+
+- `grep` (default): the system prompt lists likely file locations and the
+  model searches with `search_code`.
+- `guide`: the system prompt lists the topics of `guides/atlantis-code.md`
+  and the model is told to call `read_guide` first, then `read_file` at the
+  returned lines, and to use `search_code` only for what the guide lacks.
+  `guide/store.ts` parses the guide and resolves every symbol to a line in
+  the current checkout after each sync (`GuideStore.prepare`), so the guide
+  never carries line numbers. Unresolved entries are logged and shown to the
+  model as missing. Without a guide file the mode falls back to `grep`.
+
+Guide format: `## <topic>` headings, one to three sentences of intro, then
+entries `` - `Symbol` (path): what it decides ``. `Symbol` is a `Class::Method`,
+free function, table name, enum constant or a `GameDefs` field name as it
+appears in `<variant>/rules.cpp`. The guide points; it must not contain the
+numbers or formulas themselves, so answers stay grounded in the code. Run
+`npm run guide:check` after editing it or bumping the game repo. The eval report
+records the mode (`settings.lookupMode`) so runs can be compared with
+`npm run eval -- --mode guide`.
 
 Rules for tools:
 
@@ -273,6 +315,12 @@ them in one place (`llm/prompts.ts`).
   numbers plus rules formulas, a worked example with stated assumptions, and
   counters backed by sources.
 - Discord markdown only. Do not use headings for short answers.
+- Persona: the bot is **The Collective** (Borg). Answers say "we" and may end
+  with one short Borg line; the voice never changes facts or clarity. Status
+  and error strings in `discord/format.ts` and `discord/handlers.ts` use the same
+  voice but keep times, links and next steps plain. Progress prefixes live in
+  `format.STATUS_PREFIXES`; keep old ones there when renaming, so `history.ts`
+  still skips them in older threads.
 
 ## Conventions
 
@@ -299,5 +347,16 @@ them in one place (`llm/prompts.ts`).
   has read-only tools only, so the impact of prompt injection is limited to
   the text of the answer. Keep it that way: add no tools that write, execute
   or fetch URLs.
+- `/report-bug` and `/wish` are the only things that write anywhere: Discord
+  commands (never LLM tools) that file a GitHub issue with the operator's
+  `GITHUB_TOKEN`. They are enabled only when the token is set (see
+  `ENABLED_COMMANDS`), share an hourly per-user limit, and break `@mentions` and
+  `#refs` in the text so it can't ping GitHub users.
+- Reported issues are polled (`GITHUB_POLL_INTERVAL_MINUTES`) and their updates
+  posted in an "Anomaly #N · title" or "Wish #N · title" thread. GitHub text is untrusted: only
+  comments by OWNER/MEMBER/COLLABORATOR are quoted (shortened), others are
+  counted; only the reporter can be pinged. These threads are never answer
+  threads: follow-ups there don't reach the LLM. `github/` must not depend on
+  Discord; posting is the `Deliver` callback from `discord/anomalies.ts`.
 - Set `allowedMentions: { parse: [] }` on every bot message, so an answer can
   never ping `@everyone` or roles.
