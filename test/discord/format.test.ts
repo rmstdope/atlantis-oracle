@@ -205,3 +205,11 @@ describe('parseAsker', () => {
     expect(parseAsker('no mention')).toBeUndefined();
   });
 });
+
+describe('formatQuestion', () => {
+  it('fits one Discord message however long the (defanged) question is', () => {
+    const header = formatQuestion('123', 'x'.repeat(5000));
+    expect(header.length).toBeLessThanOrEqual(2000);
+    expect(parseQuestion(header)).toMatch(/^x+…$/);
+  });
+});

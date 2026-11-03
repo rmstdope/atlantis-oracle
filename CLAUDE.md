@@ -154,8 +154,10 @@ test/                   mirrors src/; helpers/ has the fixture path and a script
    before the rate limit, so it costs no slot), then the rate limit, then
    `oracle.screen()` (the topic check, `LLM_TOPIC_CHECK`). Only when all pass is
    the question header posted, as a normal channel message
-   (`formatQuestion`, links neutralized, no embeds), the private reply deleted,
-   and a thread started from the header. A header posted inside an answer
+   (`formatQuestion`, links neutralized, no embeds, clipped to one message), the
+   private reply deleted, and a thread started from the header (only with
+   permission to create and post in threads; otherwise the answer goes inline).
+   `/ask` inside an answer thread continues that thread's conversation. A header posted inside an answer
    thread is read back by `history.ts` as the asker's turn (`headerQuestion`). The thread name ends in ` · <variant>`, so
    follow-ups need no stored state.
 2. Follow-ups are accepted only from the asker, whose ID is the first mention
@@ -408,9 +410,13 @@ port, outgoing connections only. Its contract with the infra:
 - The topic check (`llm/topic.ts`) limits cost and scope; it is not an
   injection defence. It is an LLM reading attacker text, and an injection can
   ride on a genuine question. It must fail open, and false rejections matter
-  more than misses: check `npm run eval:topic` after changing its prompt. It
-  runs outside the `LLM_MAX_CONCURRENT` limiter on purpose (see
-  `Oracle.screen`).
+  more than misses: check `npm run eval:topic` after changing its prompt (a
+  failed call counts as an error there, not a pass). It runs outside the
+  `LLM_MAX_CONCURRENT` limiter on purpose (see `Oracle.screen`) and gives up
+  after 60 s, answering the question.
+- Player text that the bot repeats publicly (the `/ask` question header, the
+  first line in the `/report-bug` and `/wish` reply) follows the same link rules
+  as answers.
 - `/report-bug` and `/wish` are the only things that write anywhere: Discord
   commands (never LLM tools) that file a GitHub issue with the operator's
   `GITHUB_TOKEN`. They are enabled only when the token is set (see

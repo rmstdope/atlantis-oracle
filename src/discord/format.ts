@@ -64,11 +64,17 @@ export function footer(info: {
 }
 
 const QUESTION_PREFIX = '**Question:** ';
+const DISCORD_MESSAGE_LIMIT = 2000;
 const QUESTION_SUFFIX = '[Accessing collective hive mind ... ]';
 
 /** The /ask reply that becomes the thread's starter message. */
 export function formatQuestion(userId: string, question: string): string {
-  return `We are Borg!\n<@${userId}> asked:\n${QUESTION_PREFIX}${question}\n${QUESTION_SUFFIX}`;
+  const head = `We are Borg!\n<@${userId}> asked:\n${QUESTION_PREFIX}`;
+  const tail = `\n${QUESTION_SUFFIX}`;
+  // Defanged links lengthen a question; the header must still fit one message.
+  const room = DISCORD_MESSAGE_LIMIT - head.length - tail.length;
+  const text = question.length > room ? `${question.slice(0, room - 1)}…` : question;
+  return `${head}${text}${tail}`;
 }
 
 const MAX_REPORT_TITLE = 100;
@@ -200,7 +206,17 @@ const QUEUED_PREFIX = '⏳ Your query is queued';
  * Starts of progressMessage output, so history.ts can skip status messages.
  * The older prefixes keep threads from before the rename working.
  */
-export const STATUS_PREFIXES = [PROGRESS_PREFIX, QUEUED_PREFIX, '🔎 Researching', '⏳ Waiting'];
+/** Reply when a follow-up's thread asker can't be determined right now (not conversation). */
+export const UNVERIFIED_THREAD_REPLY =
+  '⚠️ The origin of this thread could not be verified. Repeat later.';
+
+export const STATUS_PREFIXES = [
+  PROGRESS_PREFIX,
+  QUEUED_PREFIX,
+  UNVERIFIED_THREAD_REPLY,
+  '🔎 Researching',
+  '⏳ Waiting',
+];
 
 /** The status message shown while a question is being researched. */
 export function progressMessage(steps: string[], elapsedMs: number, queued = 0): string {

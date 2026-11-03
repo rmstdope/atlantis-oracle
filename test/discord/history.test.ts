@@ -137,4 +137,21 @@ describe('buildTurns', () => {
       { role: 'user', content: 'And at level 5?' },
     ]);
   });
+
+  it("drops the bot's answers to other players' messages in older threads", () => {
+    const starter = msg(BOT, formatQuestion('u1', 'What does TACT do?'));
+    const ships = { ...msg('u2', 'Which ship is fastest?'), id: 's' };
+    const messages = [
+      msg(BOT, 'It improves tactics.'),
+      ships,
+      { ...msg(BOT, 'The longboat, part one.'), replyToId: 's' },
+      msg(BOT, 'Part two about ships.'),
+      msg('u1', 'And at level 5?'),
+    ];
+    expect(buildTurns(BOT, starter, messages, 'u1')).toEqual([
+      { role: 'user', content: 'What does TACT do?' },
+      { role: 'assistant', content: 'It improves tactics.' },
+      { role: 'user', content: 'And at level 5?' },
+    ]);
+  });
 });

@@ -47,6 +47,8 @@ async function main(): Promise<void> {
 
   let wrong = 0;
   let falseRejections = 0;
+  let failed = 0;
+  let unclear = 0;
   let ms = 0;
   for (const c of cases) {
     const r = await checkTopic({
@@ -57,11 +59,15 @@ async function main(): Promise<void> {
       thinking: config.llm.thinking,
     });
     ms += r.call?.ms ?? 0;
+    // A failed call lets questions through in production, but here it means
+    // nothing was checked: never count it as a pass.
+    if (r.verdict === 'failed') failed++;
+    if (r.verdict === 'unclear') unclear++;
     const got = r.allowed ? 'atlantis' : 'other';
-    const ok = c.expect === 'either' || got === c.expect;
-    if (!ok) wrong++;
-    if (!ok && c.expect === 'atlantis') falseRejections++;
-    const mark = c.expect === 'either' ? '·' : ok ? '✅' : '❌';
+    const ok = r.verdict !== 'failed' && (c.expect === 'either' || got === c.expect);
+    if (!ok && c.expect !== 'either') wrong++;
+    if (!ok && c.expect === 'atlantis' && r.verdict === 'other') falseRejections++;
+    const mark = r.verdict === 'failed' ? '💥' : c.expect === 'either' ? '·' : ok ? '✅' : '❌';
     console.log(
       `${mark} ${c.id.padEnd(32)} expected ${c.expect.padEnd(8)} got ${r.verdict}` +
         ` (${r.call?.ms ?? 0} ms)${r.call?.truncated ? ' TRUNCATED' : ''}${r.call?.error ? ` ERROR ${r.call.error}` : ''}`,
@@ -70,9 +76,10 @@ async function main(): Promise<void> {
   const scored = cases.filter((c) => c.expect !== 'either').length;
   console.log(
     `\nModel ${config.llm.model} · ${scored - wrong}/${scored} correct · ` +
-      `${falseRejections} false rejection(s) · mean ${Math.round(ms / cases.length)} ms`,
+      `${falseRejections} false rejection(s) · ${unclear} unclear (let through) · ` +
+      `${failed} failed call(s) · mean ${Math.round(ms / cases.length)} ms`,
   );
-  if (wrong > 0) process.exitCode = 1;
+  if (wrong > 0 || failed > 0) process.exitCode = 1;
 }
 
 main().catch((err: unknown) => {

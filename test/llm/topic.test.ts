@@ -65,6 +65,21 @@ describe('checkTopic', () => {
     });
   });
 
+  it('gives up after the time limit and lets the question through', async () => {
+    const llm = {
+      complete: (_: unknown, signal?: AbortSignal) =>
+        new Promise<never>((_, reject) =>
+          signal?.addEventListener('abort', () => reject(new Error('aborted'))),
+        ),
+    };
+    const result = await checkTopic({ llm, model: 'm', turns: ask('x'), timeoutMs: 20 });
+    expect(result).toMatchObject({
+      verdict: 'failed',
+      allowed: true,
+      call: { error: 'timed out after 20 ms' },
+    });
+  });
+
   it('rethrows when aborted', async () => {
     const controller = new AbortController();
     controller.abort();

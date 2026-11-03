@@ -42,7 +42,15 @@ export interface TopicCheckOptions {
   /** As LLM_THINKING: anything but `on` asks for no reasoning on this call. */
   thinking?: 'on' | 'off' | 'final';
   signal?: AbortSignal;
+  /**
+   * Give up after this long and answer the question anyway. Keeps a check
+   * queued behind research on a single-slot server from outliving /ask's
+   * 15-minute interaction. Default 60 s.
+   */
+  timeoutMs?: number;
 }
+
+const DEFAULT_TIMEOUT_MS = 60_000;
 
 /** Earlier turns shown as context, and how much of each. */
 const CONTEXT_TURNS = 4;
@@ -102,8 +110,10 @@ export async function checkTopic(opts: TopicCheckOptions): Promise<TopicResult> 
     completionTokens: 0,
     ...extra,
   });
+  const timeout = AbortSignal.timeout(opts.timeoutMs ?? DEFAULT_TIMEOUT_MS);
+  const signal = opts.signal ? AbortSignal.any([opts.signal, timeout]) : timeout;
   try {
-    const res = await opts.llm.complete(params, opts.signal);
+    const res = await opts.llm.complete(params, signal);
     const choice = res.choices?.[0];
     const truncated = choice?.finish_reason === 'length';
     // A reply cut off by max_tokens may be half-finished reasoning: never a verdict.
@@ -117,7 +127,13 @@ export async function checkTopic(opts: TopicCheckOptions): Promise<TopicResult> 
     return { verdict, allowed: verdict !== 'other', call };
   } catch (err) {
     if (opts.signal?.aborted) throw err;
-    const call = record({ error: err instanceof Error ? err.message : String(err) });
+    const call = record({
+      error: timeout.aborted
+        ? `timed out after ${opts.timeoutMs ?? DEFAULT_TIMEOUT_MS} ms`
+        : err instanceof Error
+          ? err.message
+          : String(err),
+    });
     return { verdict: 'failed', allowed: true, call };
   }
 }

@@ -67,16 +67,29 @@ export function buildTurns(
   // A rejection replies to the message it rejected; both leave the history.
   const offTopic = (m: HistoryMessage) => m.authorId === botId && isOffTopicReply(m.content);
   const rejected = new Set(messages.filter(offTopic).map((m) => m.replyToId));
-  const kept = [...messages]
-    .sort((a, b) => a.createdTimestamp - b.createdTimestamp)
-    .filter(
-      (m) =>
-        !offTopic(m) &&
-        !(m.id !== undefined && rejected.has(m.id)) &&
-        (m.authorId === botId || !askerId || m.authorId === askerId) &&
-        // Another player's question header, from before /ask was asker-only.
-        !(askerId && headerQuestion(m.content) !== undefined && parseAsker(m.content) !== askerId),
-    );
+  const dropped = new Set<string>();
+  const kept: HistoryMessage[] = [];
+  let droppingReply = false;
+  for (const m of [...messages].sort((a, b) => a.createdTimestamp - b.createdTimestamp)) {
+    const bot = m.authorId === botId;
+    const keep =
+      !offTopic(m) &&
+      !(m.id !== undefined && rejected.has(m.id)) &&
+      (bot || !askerId || m.authorId === askerId) &&
+      // Another player's question header, from before /ask was asker-only.
+      !(askerId && headerQuestion(m.content) !== undefined && parseAsker(m.content) !== askerId);
+    // The bot's answer to a dropped message (in older threads, other players'
+    // questions) goes too: its first part replies to it, later parts follow.
+    const answersDropped: boolean = bot && m.replyToId !== undefined && dropped.has(m.replyToId);
+    const continuesDropped: boolean = bot && m.replyToId === undefined && droppingReply;
+    if (!keep || answersDropped || continuesDropped) {
+      if (m.id !== undefined) dropped.add(m.id);
+      droppingReply = bot && (answersDropped || continuesDropped);
+      continue;
+    }
+    droppingReply = false;
+    kept.push(m);
+  }
   for (const m of kept.slice(-HISTORY_LIMIT)) {
     const asked = m.authorId === botId ? headerQuestion(m.content) : undefined;
     // A question header (/ask inside the thread) is the asker's turn, not the bot's.

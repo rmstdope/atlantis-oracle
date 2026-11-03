@@ -29,6 +29,7 @@ import {
   PHASE_STEPS,
   formatQuestion,
   OFF_TOPIC_REPLY,
+  UNVERIFIED_THREAD_REPLY,
   parseAsker,
   progressMessage,
   splitMessage,
@@ -72,15 +73,6 @@ export function registerHandlers(client: Client, deps: HandlerDeps): void {
 
   // Answers may only link into the game repository.
   const safeLinks = githubRepoLinks(deps.config.repo.url);
-  /** Swaps a deferred public reply for a private message (failures, refusals). */
-  const replacePrivately = async (interaction: ChatInputCommandInteraction, content: string) => {
-    await interaction.deleteReply().catch(() => {});
-    await interaction.followUp({
-      content,
-      flags: MessageFlags.Ephemeral,
-      allowedMentions: NO_MENTIONS,
-    });
-  };
 
   const retryText = (ms: number) =>
     `Your queries exceed acceptable parameters. Repeat in ${Math.ceil(ms / 1000)}s.`;
@@ -215,7 +207,8 @@ export function registerHandlers(client: Client, deps: HandlerDeps): void {
     try {
       // An answer thread belongs to its asker: others' questions would join that
       // conversation. Checked before the rate limit, so a refusal costs nothing.
-      if (channel.isThread() && isAnswerThread(channel)) {
+      const inAnswerThread = channel.isThread() && isAnswerThread(channel);
+      if (inAnswerThread) {
         const askerId = await askerOf(channel);
         if (askerId !== interaction.user.id) {
           await refuse(
@@ -233,7 +226,10 @@ export function registerHandlers(client: Client, deps: HandlerDeps): void {
         await refuse(retryText(limit.retryAfterMs));
         return;
       }
-      const turns: ChatTurn[] = [{ role: 'user', content: question }];
+      // Inside an answer thread the question continues that conversation.
+      const turns: ChatTurn[] = inAnswerThread
+        ? withQuestion(await threadTurns(channel, interaction.user.id), question)
+        : [{ role: 'user', content: question }];
       if (!(await deps.oracle.screen(turns)).allowed) {
         await refuse(OFF_TOPIC_REPLY);
         return;
@@ -252,9 +248,15 @@ export function registerHandlers(client: Client, deps: HandlerDeps): void {
       // The private "thinking…" has done its job; the header is the reply now.
       await interaction.deleteReply().catch(() => {});
 
-      // Already in a thread (or a channel without threads): answer right here.
+      // Already in a thread, in a channel without threads, or without the
+      // permissions to start and post in one: answer right here.
       const canThread =
-        channel.type === ChannelType.GuildText || channel.type === ChannelType.GuildAnnouncement;
+        (channel.type === ChannelType.GuildText ||
+          channel.type === ChannelType.GuildAnnouncement) &&
+        interaction.appPermissions.has([
+          PermissionFlagsBits.CreatePublicThreads,
+          PermissionFlagsBits.SendMessagesInThreads,
+        ]);
       if (!canThread) {
         await answerInto(channel, turns, variant, header);
         return;
@@ -360,8 +362,15 @@ export function registerHandlers(client: Client, deps: HandlerDeps): void {
       );
       logger.info({ user: interaction.user.id, issue: issue.number }, texts.log);
       const posted = await interaction.editReply({
-        content: formatIssueFiled(kind, interaction.user.id, text, issue.url),
+        // The player's first line goes out under the bot's name: same link rules as answers.
+        content: formatIssueFiled(
+          kind,
+          interaction.user.id,
+          neutralizeLinks(text, safeLinks),
+          issue.url,
+        ),
         allowedMentions: NO_MENTIONS,
+        flags: NO_EMBEDS,
       });
       // Tracking is best effort: the issue itself has been filed.
       await deps.anomalies
@@ -378,7 +387,12 @@ export function registerHandlers(client: Client, deps: HandlerDeps): void {
     } catch (err) {
       logger.error({ err, repo: github.repo, kind }, 'Failed to file issue');
       // Only the user needs to know; drop the public placeholder.
-      await replacePrivately(interaction, texts.failed);
+      await interaction.deleteReply().catch(() => {});
+      await interaction.followUp({
+        content: texts.failed,
+        flags: MessageFlags.Ephemeral,
+        allowedMentions: NO_MENTIONS,
+      });
     }
   }
 
@@ -476,19 +490,12 @@ export function registerHandlers(client: Client, deps: HandlerDeps): void {
     return askerId ?? null;
   }
 
-  async function handleThreadMessage(message: Message<true>, thread: ThreadChannel): Promise<void> {
-    const botId = client.user!.id;
-    // Only the player who asked can continue; others may talk in the thread
-    // without the bot answering or reading along.
-    const askerId = await askerOf(thread);
-    if (!askerId || message.author.id !== askerId) return;
-
-    const limit = rateLimiter.check(message.author.id);
-    if (!limit.allowed) {
-      await message.reply({ content: retryText(limit.retryAfterMs), allowedMentions: NO_MENTIONS });
-      return;
-    }
-
+  /**
+   * The conversation in an answer thread: its starter and up to
+   * HISTORY_FETCH_LIMIT messages, reduced by buildTurns to the asker's.
+   * (The starter is usually cached by askerOf's fetch, so no second request.)
+   */
+  async function threadTurns(thread: ThreadChannel, askerId: string): Promise<ChatTurn[]> {
     const toHistory = (m: Message): HistoryMessage => ({
       id: m.id,
       replyToId: m.reference?.messageId,
@@ -500,12 +507,45 @@ export function registerHandlers(client: Client, deps: HandlerDeps): void {
       thread.fetchStarterMessage().catch(() => null),
       thread.messages.fetch({ limit: HISTORY_FETCH_LIMIT }),
     ]);
-    const turns = buildTurns(
-      botId,
+    return buildTurns(
+      client.user!.id,
       starter ? toHistory(starter) : undefined,
       [...recent.values()].map(toHistory),
       askerId,
     );
+  }
+
+  /** Earlier turns plus a new question as the last user turn. */
+  const withQuestion = (turns: ChatTurn[], question: string): ChatTurn[] => {
+    const last = turns.at(-1);
+    return last?.role === 'user'
+      ? [...turns.slice(0, -1), { role: 'user', content: `${last.content}\n\n${question}` }]
+      : [...turns, { role: 'user', content: question }];
+  };
+
+  async function handleThreadMessage(message: Message<true>, thread: ThreadChannel): Promise<void> {
+    // Only the player who asked can continue; others may talk in the thread
+    // without the bot answering or reading along.
+    const askerId = await askerOf(thread);
+    if (askerId === undefined) {
+      // Temporary (nothing cached): say so rather than leave the message unanswered.
+      await message
+        .reply({
+          content: UNVERIFIED_THREAD_REPLY,
+          allowedMentions: NO_MENTIONS,
+        })
+        .catch(() => {});
+      return;
+    }
+    if (!askerId || message.author.id !== askerId) return;
+
+    const limit = rateLimiter.check(message.author.id);
+    if (!limit.allowed) {
+      await message.reply({ content: retryText(limit.retryAfterMs), allowedMentions: NO_MENTIONS });
+      return;
+    }
+
+    const turns = await threadTurns(thread, askerId);
     if (turns.at(-1)?.role !== 'user') return;
     if (!(await deps.oracle.screen(turns)).allowed) {
       await message.reply({ content: OFF_TOPIC_REPLY, allowedMentions: NO_MENTIONS });
