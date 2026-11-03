@@ -1,11 +1,12 @@
 import type { Logger } from '../logger.js';
-import type { GithubClient, IssueChange, IssueSummary } from './client.js';
+import type { GithubClient, IssueComment, IssueSummary } from './client.js';
 import type { Anomaly, AnomalyStore } from './store.js';
 
 export interface AnomalyUpdate {
   anomaly: Anomaly;
   issue: Pick<IssueSummary, 'number' | 'title' | 'url'>;
-  changes: IssueChange[];
+  /** New comments, oldest first. */
+  comments: IssueComment[];
 }
 
 /**
@@ -28,7 +29,7 @@ const FIRST_POLL_MS = 10_000;
 
 const time = (iso: string) => Date.parse(iso);
 
-/** Watches the issues filed through /report-bug and reports their changes. */
+/** Watches the issues filed through /report-bug and /wish and reports new comments. */
 export class AnomalyTracker {
   private running = false;
 
@@ -69,7 +70,7 @@ export class AnomalyTracker {
     this.running = true;
     try {
       if (this.store.anomalies.length === 0) return;
-      await this.verifyIfDue(deliver);
+      await this.verifyIfDue();
 
       const poll = this.store.data.poll;
       const since =
@@ -104,12 +105,12 @@ export class AnomalyTracker {
   private async process(anomaly: Anomaly, issue: IssueSummary, deliver: Deliver): Promise<void> {
     const entries = await this.source.timeline(issue.number);
     const fresh = entries.filter((e) => time(e.at) > time(anomaly.lastEventAt));
-    const changes = fresh.flatMap((e) => (e.change ? [e.change] : []));
+    const comments = fresh.flatMap((e) => (e.comment ? [e.comment] : []));
     let threadId = anomaly.threadId;
-    if (changes.length > 0) {
-      const result = await deliver({ anomaly, issue, changes });
+    if (comments.length > 0) {
+      const result = await deliver({ anomaly, issue, comments });
       if (result?.threadId) threadId = result.threadId;
-      this.logger.info({ issue: issue.number, changes: changes.length }, 'Reported anomaly update');
+      this.logger.info({ issue: issue.number, comments: comments.length }, 'Reported new comments');
     }
     Object.assign(anomaly, {
       title: issue.title,
@@ -128,22 +129,17 @@ export class AnomalyTracker {
   }
 
   /** Once a day: issues that were deleted or transferred never show up as changed. */
-  private async verifyIfDue(deliver: Deliver): Promise<void> {
+  private async verifyIfDue(): Promise<void> {
     const { verifiedAt } = this.store.data.poll;
     const now = this.now();
     if (verifiedAt && now.getTime() - time(verifiedAt) < DAY_MS) return;
     for (const anomaly of [...this.store.anomalies]) {
       try {
         if ((await this.source.issue(anomaly.issue)) !== 'gone') continue;
-        await deliver({
-          anomaly,
-          issue: { number: anomaly.issue, title: anomaly.title, url: anomaly.url },
-          changes: [{ kind: 'gone' }],
-        });
         this.store.remove(anomaly.issue);
-        this.logger.info({ issue: anomaly.issue }, 'Anomaly issue is gone; stopped tracking');
+        this.logger.info({ issue: anomaly.issue }, 'Tracked issue is gone; stopped tracking');
       } catch (err) {
-        this.logger.warn({ err, issue: anomaly.issue }, 'Could not verify anomaly issue');
+        this.logger.warn({ err, issue: anomaly.issue }, 'Could not verify tracked issue');
       }
     }
     this.store.data.poll.verifiedAt = now.toISOString();

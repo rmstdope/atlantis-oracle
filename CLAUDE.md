@@ -76,7 +76,7 @@ src/
     history.ts          rebuilds conversation turns from a Discord thread
     rateLimit.ts        per-user sliding window
     releases.ts         posts new-release announcements in RELEASE_ANNOUNCE_CHANNEL_ID
-    anomalies.ts        Borg wording of issue updates (anomaly or wish), /anomalies list; posts updates in a thread on the report
+    anomalies.ts        new comments as Borg messages (anomaly or wish), /anomalies list; posts them in a thread on the report
   llm/
     client.ts           LlmClient interface + OpenAI SDK implementation
     agent.ts            tool-calling loop (the core of the bot)
@@ -94,7 +94,7 @@ src/
     store.ts            AnomalyStore: tracked reports in one JSON file (zod-checked, atomic save)
     releases.ts         ReleaseWatcher: latest release (10-min cache) for /latest-release; announces
                         new ones through an Announce callback, last one kept in RELEASE_STATE_PATH
-    tracker.ts          AnomalyTracker: polls changed issues, diffs timelines, hands updates to a Deliver callback
+    tracker.ts          AnomalyTracker: polls changed issues, finds new comments in timelines, hands them to a Deliver callback
   rules/
     build.ts            builds rules HTML: git archive -> make GAME=<v> -> <v> genrules,
                         then compiles and runs native/compendium.cpp against the engine objects
@@ -352,8 +352,9 @@ them in one place (`llm/prompts.ts`).
   `GITHUB_TOKEN`. They are enabled only when the token is set (see
   `ENABLED_COMMANDS`), share an hourly per-user limit, and break `@mentions` and
   `#refs` in the text so it can't ping GitHub users.
-- Reported issues are polled (`GITHUB_POLL_INTERVAL_MINUTES`) and their updates
-  posted in an "Anomaly #N · title" or "Wish #N · title" thread. GitHub text is untrusted: only
+- Reported issues are polled (`GITHUB_POLL_INTERVAL_MINUTES`) and their new
+  comments (only comments, no state changes) posted in an "Anomaly #N · title"
+  or "Wish #N · title" thread. GitHub text is untrusted: only
   comments by OWNER/MEMBER/COLLABORATOR are quoted (shortened), others are
   counted; only the reporter can be pinged. These threads are never answer
   threads: follow-ups there don't reach the LLM. `github/` must not depend on

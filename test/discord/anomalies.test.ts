@@ -7,24 +7,22 @@ import {
   quoteComment,
   shouldPing,
 } from '../../src/discord/anomalies.js';
-import type { IssueChange } from '../../src/github/client.js';
+import type { IssueComment } from '../../src/github/client.js';
 import type { AnomalyUpdate } from '../../src/github/tracker.js';
 import { anomaly } from '../helpers/anomaly.js';
 
-const update = (changes: IssueChange[], extra: Partial<AnomalyUpdate['anomaly']> = {}) => ({
+const update = (comments: IssueComment[], extra: Partial<AnomalyUpdate['anomaly']> = {}) => ({
   anomaly: anomaly(7, extra),
   issue: { number: 7, title: 'Upkeep', url: 'https://gh/7' },
-  changes,
+  comments,
 });
-const team = (body: string, author = 'rmstdope'): IssueChange => ({
-  kind: 'comment',
+const team = (body: string, author = 'rmstdope', url = 'https://gh/7#c'): IssueComment => ({
   author,
   body,
-  url: 'https://gh/7#c',
+  url,
   team: true,
 });
-const stranger: IssueChange = {
-  kind: 'comment',
+const stranger: IssueComment = {
   author: 'x',
   body: '@everyone buy now',
   url: 'https://gh/7#s',
@@ -32,77 +30,45 @@ const stranger: IssueChange = {
 };
 
 describe('formatAnomalyUpdate', () => {
-  it('quotes a single team comment', () => {
+  it('quotes a team comment', () => {
     expect(formatAnomalyUpdate(update([team('Confirmed.\nFix coming.')]))).toBe(
       '**rmstdope** transmitted on anomaly #7:\n> Confirmed.\n> Fix coming.\n[View on GitHub](<https://gh/7#c>)',
     );
   });
 
-  it('only counts comments from outside the team', () => {
-    const text = formatAnomalyUpdate(update([stranger, stranger]));
+  it('names wishes as wishes', () => {
+    expect(formatAnomalyUpdate(update([team('Nice idea')], { kind: 'wish' }))).toMatch(
+      /^\*\*rmstdope\*\* transmitted on wish #7:/,
+    );
+  });
+
+  it('quotes each team comment and counts the others', () => {
+    const text = formatAnomalyUpdate(
+      update([team('first'), stranger, team('second', 'helper', 'https://gh/7#d')]),
+    );
     expect(text).toBe(
-      'Anomaly #7 received 2 transmissions from outside the Collective: [read on GitHub](<https://gh/7>)',
+      [
+        '**rmstdope** transmitted on anomaly #7:\n> first\n[View on GitHub](<https://gh/7#c>)',
+        '**helper** transmitted on anomaly #7:\n> second\n[View on GitHub](<https://gh/7#d>)',
+        '1 transmission from outside the Collective on anomaly #7: [read on GitHub](<https://gh/7>)',
+      ].join('\n\n'),
     );
     expect(text).not.toContain('buy now');
   });
 
-  it('writes single changes as sentences', () => {
-    const one = (c: IssueChange) => formatAnomalyUpdate(update([c]));
-    expect(one({ kind: 'labeled', label: 'confirmed' })).toBe(
-      'Anomaly #7 classified: `confirmed`.',
-    );
-    expect(one({ kind: 'pr', number: 12, title: 'Fix [x]', url: 'https://p' })).toBe(
-      'A correction is being assimilated: [PR #12 · Fix x](<https://p>)',
-    );
-    expect(one({ kind: 'closed', reason: 'completed' })).toBe(
-      'Anomaly #7 has been corrected. Resistance was futile.',
-    );
-    expect(one({ kind: 'closed', reason: 'not_planned' })).toContain('deemed irrelevant');
-    expect(one({ kind: 'reopened' })).toBe('Anomaly #7 has been reactivated.');
-    expect(one({ kind: 'gone' })).toBe('Anomaly #7 can no longer be located. Tracking has ended.');
-  });
-
-  it('combines several changes and quotes the latest team comment', () => {
-    const text = formatAnomalyUpdate(
-      update([
-        { kind: 'labeled', label: 'confirmed' },
-        team('first'),
-        stranger,
-        team('second', 'helper'),
-      ]),
-    );
-    expect(text).toBe(
-      [
-        'Anomaly #7 has changed state:',
-        '- classified: `confirmed`',
-        '- 2 transmissions from **rmstdope**, **helper** (latest below)',
-        '- 1 transmission from outside the Collective: [read on GitHub](<https://gh/7>)',
-        '> second',
-        '[View on GitHub](<https://gh/7#c>)',
-      ].join('\n'),
+  it('sums up comments that do not fit in one message', () => {
+    const many = Array.from({ length: 20 }, (_, i) => team(`${i} ${'x'.repeat(250)}`));
+    const text = formatAnomalyUpdate(update(many));
+    expect(text.length).toBeLessThanOrEqual(1900);
+    expect(text).toMatch(
+      /\n\n… and \d+ more transmissions: \[read on GitHub\]\(<https:\/\/gh\/7>\)$/,
     );
   });
 
   it('puts the ping in front', () => {
-    expect(formatAnomalyUpdate(update([{ kind: 'reopened' }]), 'u1')).toBe(
-      '<@u1>, anomaly #7 has been reactivated.',
+    expect(formatAnomalyUpdate(update([team('Hi')]), 'u1')).toMatch(
+      /^<@u1>, \*\*rmstdope\*\* transmitted/,
     );
-  });
-});
-
-describe('wishes', () => {
-  const wish = (changes: IssueChange[]) => update(changes, { kind: 'wish' });
-  it('use their own words', () => {
-    expect(formatAnomalyUpdate(wish([{ kind: 'closed', reason: 'completed' }]), 'u1')).toBe(
-      '<@u1>, wish #7 has been granted. Your distinctiveness has been added to our own.',
-    );
-    expect(formatAnomalyUpdate(wish([{ kind: 'closed', reason: 'not_planned' }]))).toBe(
-      'Wish #7 has been deemed irrelevant and will not be granted.',
-    );
-    expect(formatAnomalyUpdate(wish([{ kind: 'pr', number: 3, title: 'T', url: 'u' }]))).toBe(
-      'An implementation is being assimilated: [PR #3 · T](<u>)',
-    );
-    expect(formatAnomalyUpdate(wish([team('Nice idea')]))).toContain('transmitted on wish #7:');
   });
 });
 
@@ -144,11 +110,10 @@ describe('quoteComment', () => {
 });
 
 describe('shouldPing', () => {
-  it('pings on the first update in a new thread and when the issue ends', () => {
-    expect(shouldPing(update([{ kind: 'reopened' }]))).toBe(true);
-    expect(shouldPing(update([{ kind: 'reopened' }], { threadId: 't' }))).toBe(false);
-    expect(shouldPing(update([{ kind: 'reopened' }], { inThread: true }))).toBe(false);
-    expect(shouldPing(update([{ kind: 'closed', reason: null }], { threadId: 't' }))).toBe(true);
+  it('pings only on the first update, which starts the thread', () => {
+    expect(shouldPing(update([team('a')]))).toBe(true);
+    expect(shouldPing(update([team('a')], { threadId: 't' }))).toBe(false);
+    expect(shouldPing(update([team('a')], { inThread: true }))).toBe(false);
   });
 });
 

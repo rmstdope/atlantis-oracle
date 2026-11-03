@@ -23,7 +23,7 @@ const summary = (n: number, extra: Partial<IssueSummary> = {}): IssueSummary => 
 
 const comment = (at: string, body = 'Confirmed'): TimelineEntry => ({
   at,
-  change: { kind: 'comment', author: 'rmstdope', body, url: 'https://c/1', team: true },
+  comment: { author: 'rmstdope', body, url: 'https://c/1', team: true },
 });
 
 let dir: string;
@@ -111,9 +111,9 @@ describe('AnomalyTracker', () => {
       issues: [summary(3), summary(7)],
     });
     source.timeline.mockResolvedValue([
-      { at: '2026-11-01T10:00:00Z', change: { kind: 'labeled', label: 'old' } },
+      comment('2026-11-01T10:00:00Z', 'already reported'),
       comment('2026-11-02T09:00:00Z'),
-      { at: '2026-11-02T09:30:00Z', change: null },
+      { at: '2026-11-02T09:30:00Z', comment: null },
     ]);
     const deliver = vi.fn(async (_: AnomalyUpdate) => ({ threadId: 't1' }));
     await tracker().poll(deliver);
@@ -121,7 +121,7 @@ describe('AnomalyTracker', () => {
     expect(source.changedIssues).toHaveBeenCalledWith('2026-11-01T10:00:00Z', undefined);
     expect(source.timeline).toHaveBeenCalledTimes(1);
     expect(deliver).toHaveBeenCalledTimes(1);
-    expect(deliver.mock.calls[0]![0].changes).toEqual([comment('').change]);
+    expect(deliver.mock.calls[0]![0].comments).toEqual([comment('').comment]);
     expect(store.find(7)).toMatchObject({
       threadId: 't1',
       lastEventAt: '2026-11-02T09:30:00Z',
@@ -142,10 +142,10 @@ describe('AnomalyTracker', () => {
     expect(deliver).toHaveBeenCalledTimes(1);
   });
 
-  it('moves the cursor without a message when nothing reportable happened', async () => {
+  it('moves the cursor without a message when there are no new comments', async () => {
     store.add(anomaly(7));
     source.changedIssues.mockResolvedValue({ notModified: false, etag: 'e', issues: [summary(7)] });
-    source.timeline.mockResolvedValue([{ at: '2026-11-02T09:00:00Z', change: null }]);
+    source.timeline.mockResolvedValue([{ at: '2026-11-02T09:00:00Z', comment: null }]);
     const deliver = vi.fn();
     await tracker().poll(deliver);
     expect(deliver).not.toHaveBeenCalled();
@@ -181,17 +181,14 @@ describe('AnomalyTracker', () => {
     expect(store.anomalies.map((a) => a.issue)).toEqual([8]);
   });
 
-  it('reports and forgets issues that are gone, checking once a day', async () => {
+  it('silently forgets issues that are gone, checking once a day', async () => {
     store.add(anomaly(7));
     store.add(anomaly(8));
     source.issue.mockImplementation(async (n) => (n === 7 ? 'gone' : summary(n)));
     source.changedIssues.mockResolvedValue({ notModified: true });
     const deliver = vi.fn(async (_: AnomalyUpdate) => {});
     await tracker().poll(deliver);
-    expect(deliver.mock.calls[0]![0]).toMatchObject({
-      issue: { number: 7 },
-      changes: [{ kind: 'gone' }],
-    });
+    expect(deliver).not.toHaveBeenCalled();
     expect(store.anomalies.map((a) => a.issue)).toEqual([8]);
 
     await tracker().poll(deliver);

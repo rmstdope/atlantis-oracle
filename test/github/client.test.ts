@@ -65,7 +65,7 @@ describe('GithubClient.issue', () => {
 });
 
 describe('GithubClient.timeline', () => {
-  it('normalizes the events the tracker reports', async () => {
+  it('keeps comments and only the time of other events', async () => {
     const at = '2026-11-02T10:00:00Z';
     const { client } = fake(
       Response.json([
@@ -105,18 +105,19 @@ describe('GithubClient.timeline', () => {
         { event: 'committed', sha: 'abc' },
       ]),
     );
-    const changes = (await client.timeline(7)).map((e) => e.change);
-    expect(changes).toEqual([
-      { kind: 'comment', author: 'rmstdope', body: 'Confirmed', url: 'https://c/1', team: true },
-      { kind: 'comment', author: 'stranger', body: 'me too', url: 'https://c/2', team: false },
-      { kind: 'labeled', label: 'confirmed' },
-      { kind: 'assigned', assignee: 'rmstdope' },
-      { kind: 'pr', number: 12, title: 'Fix', url: 'https://p/12' },
+    const entries = await client.timeline(7);
+    expect(entries.map((e) => e.comment)).toEqual([
+      { author: 'rmstdope', body: 'Confirmed', url: 'https://c/1', team: true },
+      { author: 'stranger', body: 'me too', url: 'https://c/2', team: false },
       null,
-      { kind: 'closed', reason: 'completed' },
-      { kind: 'reopened' },
+      null,
+      null,
+      null,
+      null,
+      null,
       null,
     ]);
+    expect(entries.every((e) => e.at === at)).toBe(true);
   });
 });
 

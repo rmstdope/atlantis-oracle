@@ -53,106 +53,47 @@ const issueSchema = z
     labels: i.labels.map((l) => (typeof l === 'string' ? l : l.name)),
   }));
 
-/** A change on an issue, as the tracker reports it. */
-export type IssueChange =
-  | { kind: 'comment'; author: string; body: string; url: string; team: boolean }
-  | { kind: 'labeled'; label: string }
-  | { kind: 'assigned'; assignee: string }
-  | { kind: 'pr'; number: number; title: string; url: string }
-  | { kind: 'closed'; reason: string | null }
-  | { kind: 'reopened' }
-  | { kind: 'gone' };
+/** A comment on an issue, as the tracker reports it. */
+export interface IssueComment {
+  author: string;
+  body: string;
+  url: string;
+  /** Written by the repository's owner, a member or a collaborator. */
+  team: boolean;
+}
 
-/** A timeline entry: its time and the change, or null for events nobody is told about. */
+/** A timeline entry: its time and, for comments, the comment. */
 export interface TimelineEntry {
   at: string;
-  change: IssueChange | null;
+  comment: IssueComment | null;
 }
 
 /** Comment authors whose text is quoted in Discord; others are only counted. */
 const TEAM = new Set(['OWNER', 'MEMBER', 'COLLABORATOR']);
-
-const login = z.object({ login: z.string() }).nullish();
 
 const timelineEntrySchema = z.union([
   z
     .object({
       event: z.literal('commented'),
       created_at: z.string(),
-      user: login,
+      user: z.object({ login: z.string() }).nullish(),
       body: z.string().nullish(),
       author_association: z.string().nullish(),
       html_url: z.string(),
     })
     .transform((e): TimelineEntry => ({
       at: e.created_at,
-      change: {
-        kind: 'comment',
+      comment: {
         author: e.user?.login ?? 'unknown',
         body: e.body ?? '',
         url: e.html_url,
         team: TEAM.has(e.author_association ?? ''),
       },
     })),
-  z
-    .object({
-      event: z.literal('labeled'),
-      created_at: z.string(),
-      label: z.object({ name: z.string() }),
-    })
-    .transform((e): TimelineEntry => ({
-      at: e.created_at,
-      change: { kind: 'labeled', label: e.label.name },
-    })),
-  z
-    .object({ event: z.literal('assigned'), created_at: z.string(), assignee: login })
-    .transform((e): TimelineEntry => ({
-      at: e.created_at,
-      change: { kind: 'assigned', assignee: e.assignee?.login ?? 'unknown' },
-    })),
-  z
-    .object({
-      event: z.literal('cross-referenced'),
-      created_at: z.string(),
-      source: z.object({
-        issue: z
-          .object({
-            number: z.number(),
-            title: z.string(),
-            html_url: z.string(),
-            pull_request: z.unknown().optional(),
-          })
-          .optional(),
-      }),
-    })
-    .transform((e): TimelineEntry => {
-      const i = e.source.issue;
-      // Only pull requests: a mention from another issue is not progress on this one.
-      return {
-        at: e.created_at,
-        change:
-          i && i.pull_request !== undefined
-            ? { kind: 'pr', number: i.number, title: i.title, url: i.html_url }
-            : null,
-      };
-    }),
-  z
-    .object({
-      event: z.literal('closed'),
-      created_at: z.string(),
-      state_reason: z.string().nullish(),
-    })
-    .transform((e): TimelineEntry => ({
-      at: e.created_at,
-      change: { kind: 'closed', reason: e.state_reason ?? null },
-    })),
-  z
-    .object({ event: z.literal('reopened'), created_at: z.string() })
-    .transform((e): TimelineEntry => ({ at: e.created_at, change: { kind: 'reopened' } })),
-  // Anything else with a time (renamed, mentioned, …) only moves the cursor.
+  // Other events (labels, references, closing, …) are not reported; they only move the cursor.
   z
     .object({ created_at: z.string() })
-    .transform((e): TimelineEntry => ({ at: e.created_at, change: null })),
+    .transform((e): TimelineEntry => ({ at: e.created_at, comment: null })),
 ]);
 
 export interface Release {
@@ -304,7 +245,7 @@ export class GithubClient {
     return get(true);
   }
 
-  /** The issue's timeline (comments, labels, references, closing), oldest first. */
+  /** The issue's timeline, oldest first; only comments carry content. */
   async timeline(number: number): Promise<TimelineEntry[]> {
     const res = await this.request(`/repos/${this.repo}/issues/${number}/timeline?per_page=100`);
     return (await this.paginate(res)).flatMap((e) => {

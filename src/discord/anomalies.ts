@@ -1,5 +1,4 @@
 import { ChannelType, MessageFlags, ThreadAutoArchiveDuration, type Client } from 'discord.js';
-import type { IssueChange } from '../github/client.js';
 import type { Anomaly, IssueKind } from '../github/store.js';
 import type { AnomalyUpdate, Deliver } from '../github/tracker.js';
 
@@ -9,8 +8,6 @@ const MESSAGE_MAX = 1900;
 const THREAD_NAME_MAX = 100;
 const LIST_MAX = 20;
 const THREAD_PREFIX_RE = /^(Anomaly|Wish) #\d+ · /;
-
-type Comment = Extract<IssueChange, { kind: 'comment' }>;
 
 /** How a bug report and a wish are named in messages. */
 export const NOUN: Record<IssueKind, string> = { bug: 'Anomaly', wish: 'Wish' };
@@ -67,115 +64,41 @@ function closedStatus(kind: IssueKind, reason: string | null): string {
   }
 }
 
-function closedSentence(kind: IssueKind, n: number, reason: string | null): string {
-  const name = `${NOUN[kind]} #${n}`;
-  switch (reason) {
-    case 'not_planned':
-      return kind === 'bug'
-        ? `${name} has been deemed irrelevant and will not be corrected.`
-        : `${name} has been deemed irrelevant and will not be granted.`;
-    case 'duplicate':
-      return `${name} duplicates another and has been closed.`;
-    case 'completed':
-    case null:
-      return kind === 'bug'
-        ? `${name} has been corrected. Resistance was futile.`
-        : `${name} has been granted. Your distinctiveness has been added to our own.`;
-    default:
-      return `${name} has been closed.`;
-  }
-}
-
-const prWork = (kind: IssueKind) => (kind === 'bug' ? 'correction' : 'implementation');
-
-/** One change on its own, as a full sentence. */
-function sentence(c: Exclude<IssueChange, Comment>, kind: IssueKind, n: number): string {
-  const name = `${NOUN[kind]} #${n}`;
-  switch (c.kind) {
-    case 'labeled':
-      return `${name} classified: \`${c.label}\`.`;
-    case 'assigned':
-      return `A drone has been assigned to ${name.toLowerCase()}: **${c.assignee}**.`;
-    case 'pr':
-      return `${kind === 'bug' ? 'A correction' : 'An implementation'} is being assimilated: [PR #${c.number} · ${linkText(c.title)}](<${c.url}>)`;
-    case 'closed':
-      return closedSentence(kind, n, c.reason);
-    case 'reopened':
-      return `${name} has been reactivated.`;
-    case 'gone':
-      return `${name} can no longer be located. Tracking has ended.`;
-  }
-}
-
-/** One change in a list of several. */
-function bullet(c: Exclude<IssueChange, Comment>, kind: IssueKind): string {
-  switch (c.kind) {
-    case 'labeled':
-      return `classified: \`${c.label}\``;
-    case 'assigned':
-      return `drone assigned: **${c.assignee}**`;
-    case 'pr':
-      return `${prWork(kind)} in progress: [PR #${c.number} · ${linkText(c.title)}](<${c.url}>)`;
-    case 'closed':
-      return closedStatus(kind, c.reason);
-    case 'reopened':
-      return 'reactivated';
-    case 'gone':
-      return 'can no longer be located, tracking has ended';
-  }
-}
-
 /**
- * The Discord message for an update. Comments from the repository's team are
- * quoted; comments from anyone else are only counted, so strangers cannot post
- * into Discord through the bot.
+ * The Discord message for new comments: each comment by the repository's team
+ * is quoted on its own; comments by anyone else are only counted, so strangers
+ * cannot post into Discord through the bot. Comments that do not fit in one
+ * message are summed up with a link.
  */
 export function formatAnomalyUpdate(update: AnomalyUpdate, pingUserId?: string): string {
-  const n = update.issue.number;
-  const kind = update.anomaly.kind;
-  const name = `${NOUN[kind]} #${n}`;
-  const team = update.changes.filter((c): c is Comment => c.kind === 'comment' && c.team);
-  const outsiders = update.changes.filter((c) => c.kind === 'comment' && !c.team).length;
-  const others = update.changes.filter(
-    (c): c is Exclude<IssueChange, Comment> => c.kind !== 'comment',
-  );
-  const outsiderLine = `${plural(outsiders, 'transmission')} from outside the Collective: [read on GitHub](<${update.issue.url}>)`;
+  const name = `${NOUN[update.anomaly.kind].toLowerCase()} #${update.issue.number}`;
+  const team = update.comments.filter((c) => c.team);
+  const outsiders = update.comments.length - team.length;
+  const ping = pingUserId ? `<@${pingUserId}>, ` : '';
+  const outsiderLine =
+    outsiders > 0
+      ? `${plural(outsiders, 'transmission')} from outside the Collective on ${name}: [read on GitHub](<${update.issue.url}>)`
+      : '';
 
-  let text: string;
-  const parts = others.length + (team.length > 0 ? 1 : 0) + (outsiders > 0 ? 1 : 0);
-  if (parts === 1 && team.length <= 1) {
-    if (team.length === 1) {
-      const c = team[0]!;
-      text = `**${c.author}** transmitted on ${name.toLowerCase()}:\n${quoteComment(c.body)}\n[View on GitHub](<${c.url}>)`;
-    } else if (outsiders > 0) {
-      text = `${name} received ${outsiderLine}`;
-    } else {
-      text = sentence(others[0]!, kind, n);
+  const blocks: string[] = [];
+  let length = ping.length + outsiderLine.length;
+  for (const [i, c] of team.entries()) {
+    const block = `**${c.author}** transmitted on ${name}:\n${quoteComment(c.body)}\n[View on GitHub](<${c.url}>)`;
+    const more = `… and ${plural(team.length - i, 'more transmission')}: [read on GitHub](<${update.issue.url}>)`;
+    if (length + block.length + 2 > MESSAGE_MAX - more.length - 2) {
+      blocks.push(more);
+      break;
     }
-  } else {
-    const bullets = others.map((c) => bullet(c, kind));
-    if (team.length > 0) {
-      const authors = [...new Set(team.map((c) => c.author))].map((a) => `**${a}**`).join(', ');
-      bullets.push(
-        `${plural(team.length, 'transmission')} from ${authors}${team.length > 1 ? ' (latest below)' : ''}`,
-      );
-    }
-    if (outsiders > 0) bullets.push(outsiderLine);
-    text = `${name} has changed state:\n${bullets.map((b) => `- ${b}`).join('\n')}`;
-    const latest = team.at(-1);
-    if (latest) text += `\n${quoteComment(latest.body)}\n[View on GitHub](<${latest.url}>)`;
+    blocks.push(block);
+    length += block.length + 2;
   }
-
-  if (pingUserId) {
-    text = `<@${pingUserId}>, ${/^(Anomaly|Wish|An?) /.test(text) ? text[0]!.toLowerCase() + text.slice(1) : text}`;
-  }
-  return text.length > MESSAGE_MAX ? `${text.slice(0, MESSAGE_MAX - 1)}…` : text;
+  if (outsiderLine) blocks.push(outsiderLine);
+  return ping + blocks.join('\n\n');
 }
 
-/** The reporter is pinged on the first update in a new thread and when the issue ends. */
+/** The reporter is pinged on the first update, which starts the thread. */
 export function shouldPing(update: AnomalyUpdate): boolean {
-  const firstInNewThread = update.anomaly.threadId === null && !update.anomaly.inThread;
-  return firstInNewThread || update.changes.some((c) => c.kind === 'closed' || c.kind === 'gone');
+  return update.anomaly.threadId === null && !update.anomaly.inThread;
 }
 
 /** One line of /anomalies: link, title, status and labels. */
