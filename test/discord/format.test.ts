@@ -220,20 +220,22 @@ describe('formatInfo', () => {
     commands: ['ask', 'collective-info', 'latest-release'] as const,
     tracking: true,
     channelAllowed: true,
+    hudSiteUrl: 'https://hud.example.com',
     repoUrl: 'https://github.com/Atlantis-PBEM/Atlantis.git',
     branch: 'stable',
     commit: '0123456789abcdef',
     syncedAt: new Date(1_700_000_000_000),
     variants: ['standard', 'neworigins'],
     defaultVariant: 'standard',
-    model: 'test-model',
-    llmHost: 'api.example.com',
     queueLength: 2,
   };
 
   it('introduces the Collective, lists enabled commands and the current state', () => {
     const text = formatInfo(base);
-    expect(text).toContain('We are **The Collective**');
+    expect(text).toMatch(
+      /^We are \*\*The Collective\*\*, the Discord bot of \[Atlantis HUD\]\(<https:\/\/hud\.example\.com>\)/,
+    );
+    expect(text).toContain('assimilated the rules');
     expect(text).toContain('`/ask question:<text>');
     expect(text).toContain('`/latest-release`');
     expect(text).toContain('`/collective-info`');
@@ -242,7 +244,7 @@ describe('formatInfo', () => {
     expect(text).not.toContain('/anomalies');
     expect(text).toContain('`0123456789`, synced <t:1700000000:R>');
     expect(text).toContain('standard, neworigins (default: standard)');
-    expect(text).toContain('`test-model` via api.example.com');
+    expect(text).not.toContain('Model');
     expect(text).toContain('2 waiting');
     expect(text.length).toBeLessThanOrEqual(2000);
   });
@@ -262,6 +264,20 @@ describe('formatInfo', () => {
     expect(text).toContain('(default branch)');
     expect(text).toContain('replies from our makers are relayed');
     expect(text.length).toBeLessThanOrEqual(2000);
+  });
+
+  it('leaves out the rules intro and source state when /ask is disabled', () => {
+    const text = formatInfo({ ...base, commands: ['collective-info', 'latest-release'] });
+    expect(text).toMatch(/^We are \*\*The Collective\*\*, the Discord bot of \[Atlantis HUD\]/);
+    expect(text).toContain('`/latest-release`');
+    for (const gone of [
+      'assimilated the rules',
+      'LLM',
+      'Assimilated source',
+      'Repository',
+      'Queue',
+    ])
+      expect(text).not.toContain(gone);
   });
 
   it('does not promise relayed replies when tracking is off', () => {
