@@ -92,6 +92,19 @@ export function formatIssueFiled(
 }
 
 /** Recovers the question from a starter message made by formatQuestion. */
+/**
+ * Who asked: the first mention in the thread's starter message (the bot's
+ * question header). The player's question comes after it, so a mention
+ * inside the question can't take its place.
+ */
+export function parseAsker(content: string): string | undefined {
+  return /<@!?(\d+)>/.exec(content)?.[1];
+}
+
+/** The reply to a message the topic check rejected. */
+export const OFF_TOPIC_REPLY =
+  'This query is irrelevant to the Collective. We answer questions about Atlantis: its rules, orders and mechanics.';
+
 export function parseQuestion(content: string): string | undefined {
   const i = content.indexOf(QUESTION_PREFIX);
   if (i === -1) return undefined;

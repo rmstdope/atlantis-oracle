@@ -53,6 +53,7 @@ npm run typecheck           # tsc --noEmit
 npm run register-commands   # push slash command definitions to Discord
 npm run ask -- [--variant x] [--mode grep|guide] [--no-sync] "question"   # agent without Discord
 npm run eval -- [--only <id>] [--tier hard] [--mode grep|guide] [--sync]  # answer-quality evals (slow, uses the LLM)
+npm run eval:topic          # topic check only, over evals/questions.json + evals/topic.json
 npm run guide:check         # report code guide entries that no longer resolve in the checkout
 ```
 
@@ -78,7 +79,8 @@ src/
                         registerCommands() at start when DISCORD_REGISTER_COMMANDS is set
     handlers.ts         all slash commands and thread follow-ups -> Oracle
     format.ts           message splitting, footer, question header, thread name <-> variant
-    history.ts          rebuilds conversation turns from a Discord thread
+    history.ts          rebuilds conversation turns from a Discord thread (asker and bot only)
+    links.ts            neutralizeLinks(): answers may only link into the game repo
     rateLimit.ts        per-user sliding window
     releases.ts         posts new-release announcements in RELEASE_ANNOUNCE_CHANNEL_ID
     anomalies.ts        new comments as Borg messages (anomaly or wish), /anomalies list; posts them in a thread on the report
@@ -89,6 +91,7 @@ src/
     glossary.ts         finds all-caps game abbreviations (SSTO, BALR) in the question
     callMemory.ts       loop guard: detects repeated tool calls and re-reads of covered ranges
     prompts.ts          system prompt + Atlantis codebase hints
+    topic.ts            topic check: one call without tools, ATLANTIS/OTHER; only a clear OTHER rejects
   repo/
     sync.ts             GameRepo: clone, fetch + hard reset, commit, variant discovery
     paths.ts            resolves and sandboxes paths inside GAME_REPO_DIR
@@ -113,6 +116,7 @@ src/
   evals/
     score.ts            eval question schema and fact-recall scorer
     run.ts              `npm run eval`: asks evals/questions.json, writes data/evals/*.json
+    topic.ts            `npm run eval:topic`: the topic check alone over questions.json + topic.json
   tools/
     index.ts            registry, OpenAI tool schemas (z.toJSONSchema), runTool
     types.ts            Tool, ToolError, truncate
@@ -129,6 +133,7 @@ native/
   compendium.cpp        prints the engine's player-facing descriptions (ItemDescription,
                         ShowSkill::Report, ObjectDescription) for every enabled entry
 evals/questions.json    eval questions with fact regexes and ground truth
+evals/topic.json        labelled messages for the topic check (atlantis/other/either)
 deploy/runtime/         rmstdope-infra worker bundle: app.json, compose.json, empty route.caddy
 Dockerfile              worker image (node:22-bookworm-slim + git, make, g++; user node; /app/data volume)
 .github/workflows/ci.yml  checks, container smoke test; on main: publish image by digest + deployment-manifest
@@ -141,10 +146,15 @@ test/                   mirrors src/; helpers/ has the fixture path and a script
 1. `discord/handlers.ts` receives `/ask` or a message in a bot-owned thread. It
    checks the channel allowlist and the rate limit. For `/ask` it calls
    `deferReply()` right away (Discord gives only 3 seconds before the interaction
-   expires), edits the reply into a question header and starts a thread from it.
+   expires), then runs `oracle.screen()` (the topic check, `LLM_TOPIC_CHECK`):
+   a clear OTHER deletes the deferred reply and answers privately. Otherwise it
+   edits the reply into a question header and starts a thread from it.
    The thread name ends in ` · <variant>`, so follow-ups need no stored state.
-2. For follow-ups, `discord/history.ts` rebuilds the turns from the thread's
-   starter message and its last 20 messages. `oracle.ts` adds the system prompt
+2. Follow-ups are accepted only from the asker, whose ID is the first mention
+   in the thread's starter message (`format.parseAsker`); other messages are
+   ignored, and left out of the history. `discord/history.ts` rebuilds the turns
+   from the thread's starter message and its last 20 messages, and the topic
+   check sees the new message with up to 4 earlier turns as context. `oracle.ts` adds the system prompt
    (repo, commit, selected variant, whether rules exist, and a note that expands
    abbreviations found by `llm/glossary.ts`, e.g. `SSTO = skill "summon storm"`) and takes an
    `LLM_MAX_CONCURRENT` slot.
@@ -378,6 +388,14 @@ port, outgoing connections only. Its contract with the infra:
   has read-only tools only, so the impact of prompt injection is limited to
   the text of the answer. Keep it that way: add no tools that write, execute
   or fetch URLs.
+- Answer text is model output: `discord/links.ts` keeps only links into the
+  game repo on GitHub (masked links to anything else keep their text, other
+  URLs go into inline code), and answers and progress messages are sent with
+  `SuppressEmbeds`. Only the asker can steer an answer thread.
+- The topic check (`llm/topic.ts`) limits cost and scope; it is not an
+  injection defence. It is an LLM reading attacker text, and an injection can
+  ride on a genuine question. It must fail open, and false rejections matter
+  more than misses: check `npm run eval:topic` after changing its prompt.
 - `/report-bug` and `/wish` are the only things that write anywhere: Discord
   commands (never LLM tools) that file a GitHub issue with the operator's
   `GITHUB_TOKEN`. They are enabled only when the token is set (see

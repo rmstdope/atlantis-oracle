@@ -7,6 +7,7 @@ import { findAbbreviations, glossaryNote } from './llm/glossary.js';
 import type { LlmClient } from './llm/client.js';
 import { Limiter } from './llm/limiter.js';
 import { buildSystemPrompt } from './llm/prompts.js';
+import { checkTopic, type TopicResult } from './llm/topic.js';
 import type { GameRepo } from './repo/sync.js';
 import type { RulesStore } from './rules/store.js';
 import { codeTools, guideCodeTools, rulesTools, type Tool } from './tools/index.js';
@@ -73,6 +74,29 @@ export class Oracle {
   resolveVariant(requested?: string): string {
     const wanted = requested?.trim().toLowerCase();
     return this.repo.variants.find((v) => v.toLowerCase() === wanted) ?? this.config.defaultVariant;
+  }
+
+  /**
+   * Is the last turn about Atlantis? Run before `ask`; a rejected message
+   * should not be researched. Never throws (except when aborted): a failed
+   * check lets the message through. Not queued behind LLM_MAX_CONCURRENT, so
+   * an off-topic message is turned away without waiting for other answers.
+   */
+  async screen(turns: ChatTurn[], signal?: AbortSignal): Promise<TopicResult> {
+    if (!this.config.llm.topicCheck) return { verdict: 'atlantis', allowed: true, ms: 0 };
+    const result = await checkTopic({
+      llm: this.llm,
+      model: this.config.llm.model,
+      turns,
+      maxTokens: this.config.llm.maxTokens,
+      thinking: this.config.llm.thinking,
+      signal,
+    });
+    const log = { question: turns.at(-1)?.content.slice(0, 200), ...result };
+    if (result.verdict === 'atlantis') this.logger.debug(log, 'Topic check passed');
+    else if (result.verdict === 'other') this.logger.info(log, 'Rejected off-topic message');
+    else this.logger.warn(log, 'Topic check inconclusive; answering anyway');
+    return result;
   }
 
   async ask(input: AskInput): Promise<AskResult> {

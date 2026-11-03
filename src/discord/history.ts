@@ -25,11 +25,14 @@ function cleanBotMessage(content: string): string {
  * Builds conversation turns from a bot-owned thread: the starter message (the
  * original question), then thread messages oldest first. Consecutive messages
  * from the same side are merged (long answers are split across messages).
+ * With `askerId`, other players' messages are left out: they can talk in the
+ * thread, but they can't steer the answers to someone else's question.
  */
 export function buildTurns(
   botId: string,
   starter: HistoryMessage | undefined,
   messages: HistoryMessage[],
+  askerId?: string,
 ): ChatTurn[] {
   const turns: ChatTurn[] = [];
   const push = (role: ChatTurn['role'], content: string) => {
@@ -45,7 +48,7 @@ export function buildTurns(
   }
   for (const m of [...messages].sort((a, b) => a.createdTimestamp - b.createdTimestamp)) {
     if (m.authorId === botId) push('assistant', cleanBotMessage(m.content));
-    else push('user', m.content.trim());
+    else if (!askerId || m.authorId === askerId) push('user', m.content.trim());
   }
   for (const t of turns) {
     if (t.content.length > MAX_TURN_CHARS) t.content = `${t.content.slice(0, MAX_TURN_CHARS)}…`;

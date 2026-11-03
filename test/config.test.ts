@@ -20,6 +20,7 @@ describe('loadConfig', () => {
     expect(c.llm.finalMaxTokens).toBe(8192);
     expect(c.llm.toolOutputBudget).toBe(60000);
     expect(c.llm.reviewStep).toBe(true);
+    expect(c.llm.topicCheck).toBe(true);
     expect(c.repo.url).toBe('https://github.com/Atlantis-PBEM/Atlantis.git');
     expect(c.repo.branch).toBeUndefined();
     expect(c.repo.syncIntervalMinutes).toBe(360);

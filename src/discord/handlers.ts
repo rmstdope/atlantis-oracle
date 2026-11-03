@@ -27,15 +27,20 @@ import {
   formatRelease,
   PHASE_STEPS,
   formatQuestion,
+  OFF_TOPIC_REPLY,
+  parseAsker,
   progressMessage,
   splitMessage,
   threadName,
   variantFromThreadName,
 } from './format.js';
 import { buildTurns, HISTORY_LIMIT, type HistoryMessage } from './history.js';
+import { githubRepoLinks, neutralizeLinks } from './links.js';
 import { RateLimiter } from './rateLimit.js';
 
 const NO_MENTIONS = { parse: [] };
+/** Model output never gets link previews; see links.ts for the links themselves. */
+const NO_EMBEDS = MessageFlags.SuppressEmbeds;
 const TYPING_INTERVAL_MS = 8_000;
 /** Minimum time between edits of the progress message (Discord rate-limits edits). */
 const PROGRESS_INTERVAL_MS = 3_000;
@@ -64,6 +69,8 @@ export function registerHandlers(client: Client, deps: HandlerDeps): void {
     discord.allowedChannelIds.length === 0 ||
     [channelId, parentId].some((id) => id != null && discord.allowedChannelIds.includes(id));
 
+  // Answers may only link into the game repository.
+  const safeLinks = githubRepoLinks(deps.config.repo.url);
   const retryText = (ms: number) =>
     `Your queries exceed acceptable parameters. Repeat in ${Math.ceil(ms / 1000)}s.`;
 
@@ -79,9 +86,13 @@ export function registerHandlers(client: Client, deps: HandlerDeps): void {
   ): Promise<void> {
     const started = Date.now();
     const steps: string[] = [];
-    const render = () => progressMessage(steps, Date.now() - started, deps.oracle.queueLength);
+    const render = () =>
+      neutralizeLinks(
+        progressMessage(steps, Date.now() - started, deps.oracle.queueLength),
+        safeLinks,
+      );
     const progress = await channel
-      .send({ content: render(), allowedMentions: NO_MENTIONS })
+      .send({ content: render(), allowedMentions: NO_MENTIONS, flags: NO_EMBEDS })
       .catch(() => undefined);
 
     // Throttled edits: at most one per interval, always showing the latest steps.
@@ -119,7 +130,7 @@ export function registerHandlers(client: Client, deps: HandlerDeps): void {
           }
         },
       });
-      const chunks = splitMessage(result.text);
+      const chunks = splitMessage(neutralizeLinks(result.text, safeLinks));
       const last = chunks.length - 1;
       chunks[last] += `\n${footer({
         model: deps.config.llm.model,
@@ -129,8 +140,9 @@ export function registerHandlers(client: Client, deps: HandlerDeps): void {
       })}`;
       done = true;
       for (const [i, content] of chunks.entries()) {
-        if (i === 0 && replyTo) await replyTo.reply({ content, allowedMentions: NO_MENTIONS });
-        else await channel.send({ content, allowedMentions: NO_MENTIONS });
+        const message = { content, allowedMentions: NO_MENTIONS, flags: NO_EMBEDS } as const;
+        if (i === 0 && replyTo) await replyTo.reply(message);
+        else await channel.send(message);
       }
       await progress?.delete().catch(() => {});
     } catch (err) {
@@ -181,11 +193,21 @@ export function registerHandlers(client: Client, deps: HandlerDeps): void {
         (channel.isThread() ? variantFromThreadName(channel.name) : undefined),
     );
     await interaction.deferReply();
+    const turns: ChatTurn[] = [{ role: 'user', content: question }];
+    // Off-topic questions are turned away privately, before anything is posted.
+    if (!(await deps.oracle.screen(turns)).allowed) {
+      await interaction.deleteReply().catch(() => {});
+      await interaction.followUp({
+        content: OFF_TOPIC_REPLY,
+        flags: MessageFlags.Ephemeral,
+        allowedMentions: NO_MENTIONS,
+      });
+      return;
+    }
     const header = await interaction.editReply({
       content: formatQuestion(interaction.user.id, question),
       allowedMentions: NO_MENTIONS,
     });
-    const turns: ChatTurn[] = [{ role: 'user', content: question }];
 
     // Already in a thread (or a channel without threads): answer right here.
     const canThread =
@@ -362,6 +384,12 @@ export function registerHandlers(client: Client, deps: HandlerDeps): void {
 
   async function handleThreadMessage(message: Message<true>, thread: ThreadChannel): Promise<void> {
     const botId = client.user!.id;
+    // Only the player who asked can continue; others may talk in the thread
+    // without the bot answering or reading along.
+    const starter = await thread.fetchStarterMessage().catch(() => null);
+    const askerId = starter?.author.id === botId ? parseAsker(starter.content) : starter?.author.id;
+    if (!askerId || message.author.id !== askerId) return;
+
     const limit = rateLimiter.check(message.author.id);
     if (!limit.allowed) {
       await message.reply({ content: retryText(limit.retryAfterMs), allowedMentions: NO_MENTIONS });
@@ -373,16 +401,18 @@ export function registerHandlers(client: Client, deps: HandlerDeps): void {
       content: m.content,
       createdTimestamp: m.createdTimestamp,
     });
-    const [starter, recent] = await Promise.all([
-      thread.fetchStarterMessage().catch(() => null),
-      thread.messages.fetch({ limit: HISTORY_LIMIT }),
-    ]);
+    const recent = await thread.messages.fetch({ limit: HISTORY_LIMIT });
     const turns = buildTurns(
       botId,
-      starter ? toHistory(starter) : undefined,
+      toHistory(starter!),
       [...recent.values()].map(toHistory),
+      askerId,
     );
     if (turns.at(-1)?.role !== 'user') return;
+    if (!(await deps.oracle.screen(turns)).allowed) {
+      await message.reply({ content: OFF_TOPIC_REPLY, allowedMentions: NO_MENTIONS });
+      return;
+    }
     await answerInto(thread, turns, variantFromThreadName(thread.name), message);
   }
 

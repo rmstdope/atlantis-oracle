@@ -25,6 +25,8 @@ interface EvalResult extends Score {
   toolCalls: number;
   hitIterationCap: boolean;
   review?: string;
+  /** Topic check verdict (LLM_TOPIC_CHECK); `other` means the question was rejected. */
+  topic?: string;
   /** Every tool call in order, e.g. "read_rules {\"section\":\"balrog\"}"; repeats marked. */
   trace: string[];
   /** Every LLM request, e.g. "research 48s 31204+180 tokens". */
@@ -124,11 +126,12 @@ async function main(): Promise<void> {
     const started = Date.now();
     let result: EvalResult;
     try {
-      const r = await oracle.ask({
-        turns: [{ role: 'user', content: q.question }],
-        variant: q.variant,
-      });
+      const turns = [{ role: 'user' as const, content: q.question }];
+      const topic = await oracle.screen(turns);
+      if (!topic.allowed) throw new Error('rejected by the topic check');
+      const r = await oracle.ask({ turns, variant: q.variant });
       result = {
+        topic: topic.verdict,
         id: q.id,
         tier: q.tier,
         answer: r.text,

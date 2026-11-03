@@ -6,6 +6,7 @@ import {
   formatIssueFiled,
   formatRelease,
   formatQuestion,
+  parseAsker,
   parseQuestion,
   splitMessage,
   threadName,
@@ -195,5 +196,12 @@ describe('formatRelease', () => {
 
   it('says when there are no notes', () => {
     expect(formatRelease({ ...release, notes: '' }, hud)).toContain('No release notes');
+  });
+});
+
+describe('parseAsker', () => {
+  it('finds the asker in the question header, not a mention inside the question', () => {
+    expect(parseAsker(formatQuestion('123', 'Does <@999> win against a dragon?'))).toBe('123');
+    expect(parseAsker('no mention')).toBeUndefined();
   });
 });
