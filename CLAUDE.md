@@ -144,15 +144,19 @@ test/                   mirrors src/; helpers/ has the fixture path and a script
 ### Request flow
 
 1. `discord/handlers.ts` receives `/ask` or a message in a bot-owned thread. It
-   checks the channel allowlist. For `/ask` it then calls
+   checks the channel allowlist. For `/ask` it also checks, synchronously, that
+   the bot may send there (`appPermissions`, not a locked thread), because the
+   header is the bot's own message. Then it calls
    `deferReply({ flags: Ephemeral })` right away (Discord gives only 3 seconds
-   before the interaction expires), so every later refusal is a private edit:
+   before the interaction expires), so every later refusal or failure is a
+   private edit:
    inside an answer thread only that thread's asker may use `/ask` (checked
    before the rate limit, so it costs no slot), then the rate limit, then
    `oracle.screen()` (the topic check, `LLM_TOPIC_CHECK`). Only when all pass is
    the question header posted, as a normal channel message
-   (`formatQuestion`), the private reply deleted, and a thread started from
-   the header. The thread name ends in ` · <variant>`, so
+   (`formatQuestion`, links neutralized, no embeds), the private reply deleted,
+   and a thread started from the header. A header posted inside an answer
+   thread is read back by `history.ts` as the asker's turn (`headerQuestion`). The thread name ends in ` · <variant>`, so
    follow-ups need no stored state.
 2. Follow-ups are accepted only from the asker, whose ID is the first mention
    in the thread's starter message (`format.parseAsker`, cached per thread);

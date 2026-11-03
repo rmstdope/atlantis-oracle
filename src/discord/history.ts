@@ -1,5 +1,11 @@
 import type { ChatTurn } from '../oracle.js';
-import { isOffTopicReply, parseQuestion, STATUS_PREFIXES } from './format.js';
+import {
+  headerQuestion,
+  isOffTopicReply,
+  parseAsker,
+  parseQuestion,
+  STATUS_PREFIXES,
+} from './format.js';
 
 /** The parts of a Discord message the history needs; keeps this module testable. */
 export interface HistoryMessage {
@@ -67,10 +73,15 @@ export function buildTurns(
       (m) =>
         !offTopic(m) &&
         !(m.id !== undefined && rejected.has(m.id)) &&
-        (m.authorId === botId || !askerId || m.authorId === askerId),
+        (m.authorId === botId || !askerId || m.authorId === askerId) &&
+        // Another player's question header, from before /ask was asker-only.
+        !(askerId && headerQuestion(m.content) !== undefined && parseAsker(m.content) !== askerId),
     );
   for (const m of kept.slice(-HISTORY_LIMIT)) {
-    if (m.authorId === botId) push('assistant', cleanBotMessage(m.content));
+    const asked = m.authorId === botId ? headerQuestion(m.content) : undefined;
+    // A question header (/ask inside the thread) is the asker's turn, not the bot's.
+    if (asked !== undefined) push('user', asked);
+    else if (m.authorId === botId) push('assistant', cleanBotMessage(m.content));
     else push('user', m.content.trim());
   }
   for (const t of turns) {

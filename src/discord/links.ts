@@ -48,12 +48,13 @@ export function githubRepoLinks(repoUrl: string): LinkFilter {
   };
 }
 
-// Masked links whose target is scheme-and-slash (`https://x`, and malformed
-// forms such as `https:/x` or `https:\\x`, which URL parsers repair), then
-// <angle> links, then any scheme://… URL. Targets like `gamedata.cpp:1234`,
-// `Order::Move` or `y` (code such as `ItemDefs[i](y)`) are not links.
+// Masked links whose target has a scheme (`https://x`, and malformed forms
+// such as `https:x`, `https:/x` or `https:\\x`, which URL parsers repair), then
+// <angle> links, then any scheme://… URL. A colon followed by a digit or a
+// second colon is no scheme: `gamedata.cpp:1234` and `Order::Move` are left
+// alone, as is code like `ItemDefs[i](y)`.
 const TOKENS =
-  /\[([^\]\n]*)\]\(\s*<?([a-z][a-z0-9+.-]*:[/\\][^()\s<>]*)>?\s*\)|<([a-z][a-z0-9+.-]*:\/\/[^\s<>]+)>|([a-z][a-z0-9+.-]*:\/\/[^\s<>`]+)/gi;
+  /\[([^\]\n]*)\]\(\s*<?([a-z][a-z0-9+.-]*:(?![:\d])[^()\s<>]*)>?\s*\)|<([a-z][a-z0-9+.-]*:\/\/[^\s<>]+)>|([a-z][a-z0-9+.-]*:\/\/[^\s<>`]+)/gi;
 
 /** Linkifiers leave trailing punctuation out of a bare URL; so do we. */
 function splitTrailing(url: string): [string, string] {

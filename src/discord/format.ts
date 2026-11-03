@@ -114,6 +114,14 @@ export function isOffTopicReply(content: string): boolean {
   return OFF_TOPIC_REPLIES.includes(content.trim());
 }
 
+/**
+ * The question in a bot message that is a question header (formatQuestion),
+ * e.g. from /ask inside an answer thread; undefined for any other message.
+ */
+export function headerQuestion(content: string): string | undefined {
+  return /^We are Borg!\n<@!?\d+> asked:\n/.test(content) ? parseQuestion(content) : undefined;
+}
+
 /** Recovers the question from a starter message made by formatQuestion. */
 export function parseQuestion(content: string): string | undefined {
   const i = content.indexOf(QUESTION_PREFIX);

@@ -2,6 +2,7 @@ import {
   ChannelType,
   Events,
   MessageFlags,
+  PermissionFlagsBits,
   ThreadAutoArchiveDuration,
   type ChatInputCommandInteraction,
   type Client,
@@ -189,7 +190,16 @@ export function registerHandlers(client: Client, deps: HandlerDeps): void {
       });
       return;
     }
-    if (!channel.isSendable()) {
+    // The question is posted by the bot itself (not as the interaction reply),
+    // so it needs its own permission to send here: check before spending anything.
+    const sendPermission = channel.isThread()
+      ? PermissionFlagsBits.SendMessagesInThreads
+      : PermissionFlagsBits.SendMessages;
+    if (
+      !channel.isSendable() ||
+      !interaction.appPermissions.has(sendPermission) ||
+      (channel.isThread() && channel.locked)
+    ) {
       await interaction.reply({
         content: 'The Collective cannot transmit in this channel.',
         flags: MessageFlags.Ephemeral,
@@ -202,65 +212,70 @@ export function registerHandlers(client: Client, deps: HandlerDeps): void {
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     const refuse = (content: string) =>
       interaction.editReply({ content, allowedMentions: NO_MENTIONS });
-
-    // An answer thread belongs to its asker: others' questions would join that
-    // conversation. Checked before the rate limit, so a refusal costs nothing.
-    if (channel.isThread() && isAnswerThread(channel)) {
-      const cached = askers.get(channel.id);
-      if (cached !== undefined) remember(channel.id, cached);
-      const askerId =
-        cached === undefined ? (await threadAsker(channel)).askerId : (cached ?? undefined);
-      if (askerId !== interaction.user.id) {
-        await refuse(
-          askerId
-            ? 'This thread serves another drone. Use /ask in the channel to start your own.'
-            : 'The origin of this thread cannot be verified. Repeat later, or use /ask in the channel.',
-        );
+    try {
+      // An answer thread belongs to its asker: others' questions would join that
+      // conversation. Checked before the rate limit, so a refusal costs nothing.
+      if (channel.isThread() && isAnswerThread(channel)) {
+        const askerId = await askerOf(channel);
+        if (askerId !== interaction.user.id) {
+          await refuse(
+            askerId
+              ? 'This thread serves another drone. Use /ask in the channel to start your own.'
+              : askerId === null
+                ? 'The origin of this thread cannot be verified. Use /ask in the channel.'
+                : 'The origin of this thread could not be verified. Repeat later, or use /ask in the channel.',
+          );
+          return;
+        }
+      }
+      const limit = rateLimiter.check(interaction.user.id);
+      if (!limit.allowed) {
+        await refuse(retryText(limit.retryAfterMs));
         return;
       }
-    }
-    const limit = rateLimiter.check(interaction.user.id);
-    if (!limit.allowed) {
-      await refuse(retryText(limit.retryAfterMs));
-      return;
-    }
-    const turns: ChatTurn[] = [{ role: 'user', content: question }];
-    if (!(await deps.oracle.screen(turns)).allowed) {
-      await refuse(OFF_TOPIC_REPLY);
-      return;
-    }
+      const turns: ChatTurn[] = [{ role: 'user', content: question }];
+      if (!(await deps.oracle.screen(turns)).allowed) {
+        await refuse(OFF_TOPIC_REPLY);
+        return;
+      }
 
-    const variant = deps.oracle.resolveVariant(
-      interaction.options.getString('variant') ??
-        (channel.isThread() ? variantFromThreadName(channel.name) : undefined),
-    );
-    const header = await channel.send({
-      content: formatQuestion(interaction.user.id, question),
-      allowedMentions: NO_MENTIONS,
-    });
-    // The private "thinking…" has done its job; the header is the reply now.
-    await interaction.deleteReply().catch(() => {});
-
-    // Already in a thread (or a channel without threads): answer right here.
-    const canThread =
-      channel.type === ChannelType.GuildText || channel.type === ChannelType.GuildAnnouncement;
-    if (!canThread) {
-      await answerInto(channel, turns, variant, header);
-      return;
-    }
-
-    let thread: ThreadChannel;
-    try {
-      thread = await header.startThread({
-        name: threadName(question, variant),
-        autoArchiveDuration: ThreadAutoArchiveDuration.OneDay,
+      const variant = deps.oracle.resolveVariant(
+        interaction.options.getString('variant') ??
+          (channel.isThread() ? variantFromThreadName(channel.name) : undefined),
+      );
+      // The player's text goes out under the bot's name: same link rules as answers.
+      const header = await channel.send({
+        content: formatQuestion(interaction.user.id, neutralizeLinks(question, safeLinks)),
+        allowedMentions: NO_MENTIONS,
+        flags: NO_EMBEDS,
       });
+      // The private "thinking…" has done its job; the header is the reply now.
+      await interaction.deleteReply().catch(() => {});
+
+      // Already in a thread (or a channel without threads): answer right here.
+      const canThread =
+        channel.type === ChannelType.GuildText || channel.type === ChannelType.GuildAnnouncement;
+      if (!canThread) {
+        await answerInto(channel, turns, variant, header);
+        return;
+      }
+
+      let thread: ThreadChannel;
+      try {
+        thread = await header.startThread({
+          name: threadName(question, variant),
+          autoArchiveDuration: ThreadAutoArchiveDuration.OneDay,
+        });
+      } catch (err) {
+        logger.warn({ err, channelId: channel.id }, 'Could not start a thread; answering inline');
+        await answerInto(channel, turns, variant, header);
+        return;
+      }
+      await answerInto(thread, turns, variant);
     } catch (err) {
-      logger.warn({ err, channelId: channel.id }, 'Could not start a thread; answering inline');
-      await answerInto(channel, turns, variant, header);
-      return;
+      logger.error({ err, channelId: channel.id }, 'Failed to take a question');
+      await refuse(ERROR_REPLY).catch(() => {});
     }
-    await answerInto(thread, turns, variant);
   }
 
   async function handleInfo(interaction: ChatInputCommandInteraction): Promise<void> {
@@ -425,13 +440,17 @@ export function registerHandlers(client: Client, deps: HandlerDeps): void {
   };
 
   /**
-   * The starter message of an answer thread and who asked: the first mention
-   * in the bot's question header. Unknown when the starter is gone or can't
-   * be fetched; callers then refuse rather than guess.
+   * Who asked the question an answer thread belongs to: the first mention in
+   * the bot's question header (its starter message). A user ID; `null` when it
+   * can never be known (header deleted, or without a mention); `undefined`
+   * when it couldn't be determined right now. Cached; a hit keeps the entry fresh.
    */
-  async function threadAsker(
-    thread: ThreadChannel,
-  ): Promise<{ starter?: Message; askerId?: string }> {
+  async function askerOf(thread: ThreadChannel): Promise<string | null | undefined> {
+    const cached = askers.get(thread.id);
+    if (cached !== undefined) {
+      remember(thread.id, cached);
+      return cached;
+    }
     let starter: Message | null;
     try {
       starter = await thread.fetchStarterMessage();
@@ -440,32 +459,29 @@ export function registerHandlers(client: Client, deps: HandlerDeps): void {
       if ((err as { code?: unknown }).code === 10008) {
         logger.info({ threadId: thread.id }, 'Answer thread starter was deleted; asker unknown');
         remember(thread.id, null);
-        return {};
+        return null;
       }
       logger.warn({ err, threadId: thread.id }, 'Could not fetch the answer thread starter');
-      return {};
+      return undefined;
     }
     if (!starter) {
-      // null from Discord itself can be temporary (parent channel not cached): don't remember it.
+      // null from discord.js can be temporary (parent channel not cached): don't remember it.
       logger.warn({ threadId: thread.id }, 'Answer thread starter unavailable; asker unknown');
-      return {};
+      return undefined;
     }
     const askerId =
       starter.author.id === client.user?.id ? parseAsker(starter.content) : starter.author.id;
-    // A header without a mention won't grow one: remember that as unknown too.
+    if (!askerId) logger.info({ threadId: thread.id }, 'Answer thread header names no asker');
     remember(thread.id, askerId ?? null);
-    return { starter, askerId };
+    return askerId ?? null;
   }
 
   async function handleThreadMessage(message: Message<true>, thread: ThreadChannel): Promise<void> {
     const botId = client.user!.id;
     // Only the player who asked can continue; others may talk in the thread
     // without the bot answering or reading along.
-    const cached = askers.get(thread.id);
-    if (cached !== undefined) remember(thread.id, cached); // keep active threads cached
-    if (cached === null || (cached !== undefined && message.author.id !== cached)) return;
-    const { starter, askerId } = await threadAsker(thread);
-    if (!starter || !askerId || message.author.id !== askerId) return;
+    const askerId = await askerOf(thread);
+    if (!askerId || message.author.id !== askerId) return;
 
     const limit = rateLimiter.check(message.author.id);
     if (!limit.allowed) {
@@ -480,10 +496,13 @@ export function registerHandlers(client: Client, deps: HandlerDeps): void {
       content: m.content,
       createdTimestamp: m.createdTimestamp,
     });
-    const recent = await thread.messages.fetch({ limit: HISTORY_FETCH_LIMIT });
+    const [starter, recent] = await Promise.all([
+      thread.fetchStarterMessage().catch(() => null),
+      thread.messages.fetch({ limit: HISTORY_FETCH_LIMIT }),
+    ]);
     const turns = buildTurns(
       botId,
-      toHistory(starter),
+      starter ? toHistory(starter) : undefined,
       [...recent.values()].map(toHistory),
       askerId,
     );

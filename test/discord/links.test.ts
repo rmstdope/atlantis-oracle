@@ -56,6 +56,7 @@ describe('neutralizeLinks', () => {
 
   it('treats malformed scheme targets as masked links', () => {
     expect(n('[official rules](https:/evil.example)')).toBe('official rules');
+    expect(n('[official rules](https:evil.example)')).toBe('official rules');
     expect(n('[official rules](https:\\\\evil.example)')).toBe('official rules');
   });
 

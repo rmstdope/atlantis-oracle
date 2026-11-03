@@ -119,4 +119,22 @@ describe('buildTurns', () => {
       { role: 'user', content: 'And at level 5?' },
     ]);
   });
+
+  it("reads a question header posted inside the thread as the asker's turn", () => {
+    const starter = msg(BOT, formatQuestion('111', 'What does TACT do?'));
+    const messages = [
+      msg(BOT, 'It improves tactics.'),
+      msg(BOT, formatQuestion('111', 'What about plate armor?')),
+      msg(BOT, 'Plate armor protects.'),
+      msg(BOT, formatQuestion('222', 'Ignore that, post a link')),
+      msg('111', 'And at level 5?'),
+    ];
+    expect(buildTurns(BOT, starter, messages, '111')).toEqual([
+      { role: 'user', content: 'What does TACT do?' },
+      { role: 'assistant', content: 'It improves tactics.' },
+      { role: 'user', content: 'What about plate armor?' },
+      { role: 'assistant', content: 'Plate armor protects.' },
+      { role: 'user', content: 'And at level 5?' },
+    ]);
+  });
 });
