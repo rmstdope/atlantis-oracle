@@ -2,6 +2,7 @@ import {
   ChannelType,
   Events,
   MessageFlags,
+  PermissionFlagsBits,
   ThreadAutoArchiveDuration,
   type ChatInputCommandInteraction,
   type Client,
@@ -27,15 +28,21 @@ import {
   formatRelease,
   PHASE_STEPS,
   formatQuestion,
+  OFF_TOPIC_REPLY,
+  UNVERIFIED_THREAD_REPLY,
+  parseAsker,
   progressMessage,
   splitMessage,
   threadName,
   variantFromThreadName,
 } from './format.js';
-import { buildTurns, HISTORY_LIMIT, type HistoryMessage } from './history.js';
+import { buildTurns, HISTORY_FETCH_LIMIT, type HistoryMessage } from './history.js';
+import { githubRepoLinks, neutralizeLinks } from './links.js';
 import { RateLimiter } from './rateLimit.js';
 
 const NO_MENTIONS = { parse: [] };
+/** Model output never gets link previews; see links.ts for the links themselves. */
+const NO_EMBEDS = MessageFlags.SuppressEmbeds;
 const TYPING_INTERVAL_MS = 8_000;
 /** Minimum time between edits of the progress message (Discord rate-limits edits). */
 const PROGRESS_INTERVAL_MS = 3_000;
@@ -64,6 +71,9 @@ export function registerHandlers(client: Client, deps: HandlerDeps): void {
     discord.allowedChannelIds.length === 0 ||
     [channelId, parentId].some((id) => id != null && discord.allowedChannelIds.includes(id));
 
+  // Answers may only link into the game repository.
+  const safeLinks = githubRepoLinks(deps.config.repo.url);
+
   const retryText = (ms: number) =>
     `Your queries exceed acceptable parameters. Repeat in ${Math.ceil(ms / 1000)}s.`;
 
@@ -79,9 +89,13 @@ export function registerHandlers(client: Client, deps: HandlerDeps): void {
   ): Promise<void> {
     const started = Date.now();
     const steps: string[] = [];
-    const render = () => progressMessage(steps, Date.now() - started, deps.oracle.queueLength);
+    const render = () =>
+      neutralizeLinks(
+        progressMessage(steps, Date.now() - started, deps.oracle.queueLength),
+        safeLinks,
+      );
     const progress = await channel
-      .send({ content: render(), allowedMentions: NO_MENTIONS })
+      .send({ content: render(), allowedMentions: NO_MENTIONS, flags: NO_EMBEDS })
       .catch(() => undefined);
 
     // Throttled edits: at most one per interval, always showing the latest steps.
@@ -119,7 +133,7 @@ export function registerHandlers(client: Client, deps: HandlerDeps): void {
           }
         },
       });
-      const chunks = splitMessage(result.text);
+      const chunks = splitMessage(neutralizeLinks(result.text, safeLinks));
       const last = chunks.length - 1;
       chunks[last] += `\n${footer({
         model: deps.config.llm.model,
@@ -129,8 +143,9 @@ export function registerHandlers(client: Client, deps: HandlerDeps): void {
       })}`;
       done = true;
       for (const [i, content] of chunks.entries()) {
-        if (i === 0 && replyTo) await replyTo.reply({ content, allowedMentions: NO_MENTIONS });
-        else await channel.send({ content, allowedMentions: NO_MENTIONS });
+        const message = { content, allowedMentions: NO_MENTIONS, flags: NO_EMBEDS } as const;
+        if (i === 0 && replyTo) await replyTo.reply(message);
+        else await channel.send(message);
       }
       await progress?.delete().catch(() => {});
     } catch (err) {
@@ -167,47 +182,102 @@ export function registerHandlers(client: Client, deps: HandlerDeps): void {
       });
       return;
     }
-    const limit = rateLimiter.check(interaction.user.id);
-    if (!limit.allowed) {
+    // The question is posted by the bot itself (not as the interaction reply),
+    // so it needs its own permission to send here: check before spending anything.
+    const sendPermission = channel.isThread()
+      ? PermissionFlagsBits.SendMessagesInThreads
+      : PermissionFlagsBits.SendMessages;
+    if (
+      !channel.isSendable() ||
+      !interaction.appPermissions.has(sendPermission) ||
+      (channel.isThread() && channel.locked)
+    ) {
       await interaction.reply({
-        content: retryText(limit.retryAfterMs),
+        content: 'The Collective cannot transmit in this channel.',
         flags: MessageFlags.Ephemeral,
       });
       return;
     }
-
-    const variant = deps.oracle.resolveVariant(
-      interaction.options.getString('variant') ??
-        (channel.isThread() ? variantFromThreadName(channel.name) : undefined),
-    );
-    await interaction.deferReply();
-    const header = await interaction.editReply({
-      content: formatQuestion(interaction.user.id, question),
-      allowedMentions: NO_MENTIONS,
-    });
-    const turns: ChatTurn[] = [{ role: 'user', content: question }];
-
-    // Already in a thread (or a channel without threads): answer right here.
-    const canThread =
-      channel.type === ChannelType.GuildText || channel.type === ChannelType.GuildAnnouncement;
-    if (!canThread) {
-      if (!channel.isSendable()) return;
-      await answerInto(channel, turns, variant, header);
-      return;
-    }
-
-    let thread: ThreadChannel;
+    // Acknowledge privately at once (Discord allows 3 seconds), then check at
+    // leisure: every refusal is a private edit, and the question only becomes
+    // public, as a channel message, once all checks have passed.
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    const refuse = (content: string) =>
+      interaction.editReply({ content, allowedMentions: NO_MENTIONS });
     try {
-      thread = await header.startThread({
-        name: threadName(question, variant),
-        autoArchiveDuration: ThreadAutoArchiveDuration.OneDay,
+      // An answer thread belongs to its asker: others' questions would join that
+      // conversation. Checked before the rate limit, so a refusal costs nothing.
+      const inAnswerThread = channel.isThread() && isAnswerThread(channel);
+      if (inAnswerThread) {
+        const askerId = await askerOf(channel);
+        if (askerId !== interaction.user.id) {
+          await refuse(
+            askerId
+              ? 'This thread serves another drone. Use /ask in the channel to start your own.'
+              : askerId === null
+                ? 'The origin of this thread cannot be verified. Use /ask in the channel.'
+                : 'The origin of this thread could not be verified. Repeat later, or use /ask in the channel.',
+          );
+          return;
+        }
+      }
+      const limit = rateLimiter.check(interaction.user.id);
+      if (!limit.allowed) {
+        await refuse(retryText(limit.retryAfterMs));
+        return;
+      }
+      // Inside an answer thread the question continues that conversation.
+      const turns: ChatTurn[] = inAnswerThread
+        ? withQuestion(await threadTurns(channel, interaction.user.id), question)
+        : [{ role: 'user', content: question }];
+      if (!(await deps.oracle.screen(turns)).allowed) {
+        await refuse(OFF_TOPIC_REPLY);
+        return;
+      }
+
+      const variant = deps.oracle.resolveVariant(
+        interaction.options.getString('variant') ??
+          (channel.isThread() ? variantFromThreadName(channel.name) : undefined),
+      );
+      // The player's text goes out under the bot's name: same link rules as answers.
+      const header = await channel.send({
+        content: formatQuestion(interaction.user.id, neutralizeLinks(question, safeLinks)),
+        allowedMentions: NO_MENTIONS,
+        flags: NO_EMBEDS,
       });
+      // The private "thinking…" has done its job; the header is the reply now.
+      await interaction.deleteReply().catch(() => {});
+
+      // Already in a thread, in a channel without threads, or without the
+      // permissions to start and post in one: answer right here.
+      const canThread =
+        (channel.type === ChannelType.GuildText ||
+          channel.type === ChannelType.GuildAnnouncement) &&
+        interaction.appPermissions.has([
+          PermissionFlagsBits.CreatePublicThreads,
+          PermissionFlagsBits.SendMessagesInThreads,
+        ]);
+      if (!canThread) {
+        await answerInto(channel, turns, variant, header);
+        return;
+      }
+
+      let thread: ThreadChannel;
+      try {
+        thread = await header.startThread({
+          name: threadName(question, variant),
+          autoArchiveDuration: ThreadAutoArchiveDuration.OneDay,
+        });
+      } catch (err) {
+        logger.warn({ err, channelId: channel.id }, 'Could not start a thread; answering inline');
+        await answerInto(channel, turns, variant, header);
+        return;
+      }
+      await answerInto(thread, turns, variant);
     } catch (err) {
-      logger.warn({ err, channelId: channel.id }, 'Could not start a thread; answering inline');
-      if (channel.isSendable()) await answerInto(channel, turns, variant, header);
-      return;
+      logger.error({ err, channelId: channel.id }, 'Failed to take a question');
+      await refuse(ERROR_REPLY).catch(() => {});
     }
-    await answerInto(thread, turns, variant);
   }
 
   async function handleInfo(interaction: ChatInputCommandInteraction): Promise<void> {
@@ -292,8 +362,15 @@ export function registerHandlers(client: Client, deps: HandlerDeps): void {
       );
       logger.info({ user: interaction.user.id, issue: issue.number }, texts.log);
       const posted = await interaction.editReply({
-        content: formatIssueFiled(kind, interaction.user.id, text, issue.url),
+        // The player's first line goes out under the bot's name: same link rules as answers.
+        content: formatIssueFiled(
+          kind,
+          interaction.user.id,
+          neutralizeLinks(text, safeLinks),
+          issue.url,
+        ),
         allowedMentions: NO_MENTIONS,
+        flags: NO_EMBEDS,
       });
       // Tracking is best effort: the issue itself has been filed.
       await deps.anomalies
@@ -360,29 +437,120 @@ export function registerHandlers(client: Client, deps: HandlerDeps): void {
     }
   }
 
-  async function handleThreadMessage(message: Message<true>, thread: ThreadChannel): Promise<void> {
-    const botId = client.user!.id;
-    const limit = rateLimiter.check(message.author.id);
-    if (!limit.allowed) {
-      await message.reply({ content: retryText(limit.retryAfterMs), allowedMentions: NO_MENTIONS });
-      return;
-    }
+  /** Bot-started answer threads (not anomaly or wish threads). */
+  const isAnswerThread = (thread: ThreadChannel) =>
+    thread.ownerId === client.user?.id && !isAnomalyThreadName(thread.name);
 
+  /**
+   * Asker per answer thread, so bystanders' messages are dropped without a
+   * fetch. `null`: the starter was deleted, or has no asker mention.
+   */
+  const askers = new Map<string, string | null>();
+  const ASKER_CACHE_SIZE = 1000;
+  const remember = (threadId: string, askerId: string | null) => {
+    askers.delete(threadId);
+    askers.set(threadId, askerId);
+    if (askers.size > ASKER_CACHE_SIZE) askers.delete(askers.keys().next().value!);
+  };
+
+  /**
+   * Who asked the question an answer thread belongs to: the first mention in
+   * the bot's question header (its starter message). A user ID; `null` when it
+   * can never be known (header deleted, or without a mention); `undefined`
+   * when it couldn't be determined right now. Cached; a hit keeps the entry fresh.
+   */
+  async function askerOf(thread: ThreadChannel): Promise<string | null | undefined> {
+    const cached = askers.get(thread.id);
+    if (cached !== undefined) {
+      remember(thread.id, cached);
+      return cached;
+    }
+    let starter: Message | null;
+    try {
+      starter = await thread.fetchStarterMessage();
+    } catch (err) {
+      // 10008 Unknown Message: the header was deleted, which won't change.
+      if ((err as { code?: unknown }).code === 10008) {
+        logger.info({ threadId: thread.id }, 'Answer thread starter was deleted; asker unknown');
+        remember(thread.id, null);
+        return null;
+      }
+      logger.warn({ err, threadId: thread.id }, 'Could not fetch the answer thread starter');
+      return undefined;
+    }
+    if (!starter) {
+      // null from discord.js can be temporary (parent channel not cached): don't remember it.
+      logger.warn({ threadId: thread.id }, 'Answer thread starter unavailable; asker unknown');
+      return undefined;
+    }
+    const askerId =
+      starter.author.id === client.user?.id ? parseAsker(starter.content) : starter.author.id;
+    if (!askerId) logger.info({ threadId: thread.id }, 'Answer thread header names no asker');
+    remember(thread.id, askerId ?? null);
+    return askerId ?? null;
+  }
+
+  /**
+   * The conversation in an answer thread: its starter and up to
+   * HISTORY_FETCH_LIMIT messages, reduced by buildTurns to the asker's.
+   * (The starter is usually cached by askerOf's fetch, so no second request.)
+   */
+  async function threadTurns(thread: ThreadChannel, askerId: string): Promise<ChatTurn[]> {
     const toHistory = (m: Message): HistoryMessage => ({
+      id: m.id,
+      replyToId: m.reference?.messageId,
       authorId: m.author.id,
       content: m.content,
       createdTimestamp: m.createdTimestamp,
     });
     const [starter, recent] = await Promise.all([
       thread.fetchStarterMessage().catch(() => null),
-      thread.messages.fetch({ limit: HISTORY_LIMIT }),
+      thread.messages.fetch({ limit: HISTORY_FETCH_LIMIT }),
     ]);
-    const turns = buildTurns(
-      botId,
+    return buildTurns(
+      client.user!.id,
       starter ? toHistory(starter) : undefined,
       [...recent.values()].map(toHistory),
+      askerId,
     );
+  }
+
+  /** Earlier turns plus a new question as the last user turn. */
+  const withQuestion = (turns: ChatTurn[], question: string): ChatTurn[] => {
+    const last = turns.at(-1);
+    return last?.role === 'user'
+      ? [...turns.slice(0, -1), { role: 'user', content: `${last.content}\n\n${question}` }]
+      : [...turns, { role: 'user', content: question }];
+  };
+
+  async function handleThreadMessage(message: Message<true>, thread: ThreadChannel): Promise<void> {
+    // Only the player who asked can continue; others may talk in the thread
+    // without the bot answering or reading along.
+    const askerId = await askerOf(thread);
+    if (askerId === undefined) {
+      // Temporary (nothing cached): say so rather than leave the message unanswered.
+      await message
+        .reply({
+          content: UNVERIFIED_THREAD_REPLY,
+          allowedMentions: NO_MENTIONS,
+        })
+        .catch(() => {});
+      return;
+    }
+    if (!askerId || message.author.id !== askerId) return;
+
+    const limit = rateLimiter.check(message.author.id);
+    if (!limit.allowed) {
+      await message.reply({ content: retryText(limit.retryAfterMs), allowedMentions: NO_MENTIONS });
+      return;
+    }
+
+    const turns = await threadTurns(thread, askerId);
     if (turns.at(-1)?.role !== 'user') return;
+    if (!(await deps.oracle.screen(turns)).allowed) {
+      await message.reply({ content: OFF_TOPIC_REPLY, allowedMentions: NO_MENTIONS });
+      return;
+    }
     await answerInto(thread, turns, variantFromThreadName(thread.name), message);
   }
 
@@ -418,7 +586,7 @@ export function registerHandlers(client: Client, deps: HandlerDeps): void {
     if (!discord.commands.includes('ask')) return;
     if (message.author.bot || !message.inGuild() || !message.channel.isThread()) return;
     const thread = message.channel;
-    if (thread.ownerId !== client.user?.id || isAnomalyThreadName(thread.name)) return;
+    if (!isAnswerThread(thread)) return;
     if (!channelAllowed(thread.id, thread.parentId)) return;
     if (!message.content.trim()) return;
     try {

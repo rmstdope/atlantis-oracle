@@ -19,6 +19,7 @@
     "register-commands": "tsx src/discord/register.ts",
     "ask": "tsx src/cli.ts",
     "eval": "tsx src/evals/run.ts",
+    "eval:topic": "tsx src/evals/topic.ts",
     "guide:check": "tsx src/guide/check.ts"
   },
   "dependencies": {

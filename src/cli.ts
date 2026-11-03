@@ -51,8 +51,19 @@ async function main(): Promise<void> {
     llm: createLlmClient(config.llm),
     logger,
   });
+  const turns = [{ role: 'user' as const, content: question }];
+  const topic = await oracle.screen(turns);
+  if (!topic.allowed) {
+    console.log(`Rejected by the topic check (LLM_TOPIC_CHECK) in ${topic.call?.ms ?? 0} ms.`);
+    return;
+  }
+  if (topic.verdict !== 'atlantis') {
+    console.error(
+      `[topic check ${topic.verdict}${topic.call?.error ? `: ${topic.call.error}` : ''}; answering]`,
+    );
+  }
   const result = await oracle.ask({
-    turns: [{ role: 'user', content: question }],
+    turns,
     variant: values.variant,
     onToolCall: (name, args) => console.error(`  → ${name} ${args}`),
     onPhase: (phase) => console.error(`[${phase}]`),

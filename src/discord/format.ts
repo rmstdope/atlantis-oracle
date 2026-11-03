@@ -64,11 +64,17 @@ export function footer(info: {
 }
 
 const QUESTION_PREFIX = '**Question:** ';
+const DISCORD_MESSAGE_LIMIT = 2000;
 const QUESTION_SUFFIX = '[Accessing collective hive mind ... ]';
 
 /** The /ask reply that becomes the thread's starter message. */
 export function formatQuestion(userId: string, question: string): string {
-  return `We are Borg!\n<@${userId}> asked:\n${QUESTION_PREFIX}${question}\n${QUESTION_SUFFIX}`;
+  const head = `We are Borg!\n<@${userId}> asked:\n${QUESTION_PREFIX}`;
+  const tail = `\n${QUESTION_SUFFIX}`;
+  // Defanged links lengthen a question; the header must still fit one message.
+  const room = DISCORD_MESSAGE_LIMIT - head.length - tail.length;
+  const text = question.length > room ? `${question.slice(0, room - 1)}…` : question;
+  return `${head}${text}${tail}`;
 }
 
 const MAX_REPORT_TITLE = 100;
@@ -89,6 +95,37 @@ export function formatIssueFiled(
   const title =
     line.length > MAX_REPORT_TITLE ? `${line.slice(0, MAX_REPORT_TITLE - 1).trimEnd()}…` : line;
   return `<@${userId}> ${FILED[kind]}\n> ${title}\n<${issueUrl}>`;
+}
+
+/**
+ * Who asked: the first mention in the thread's starter message (the bot's
+ * question header). The player's question comes after it, so a mention
+ * inside the question can't take its place.
+ */
+export function parseAsker(content: string): string | undefined {
+  return /<@!?(\d+)>/.exec(content)?.[1];
+}
+
+/** The reply to a message the topic check rejected. */
+export const OFF_TOPIC_REPLY =
+  'This query is irrelevant to the Collective. We answer questions about Atlantis: its rules, orders and mechanics.';
+
+/**
+ * History leaves rejected exchanges out. The whole message must be a known
+ * rejection, so an answer that merely opens the same way stays; keep older
+ * wordings in the list if the reply changes.
+ */
+const OFF_TOPIC_REPLIES = [OFF_TOPIC_REPLY];
+export function isOffTopicReply(content: string): boolean {
+  return OFF_TOPIC_REPLIES.includes(content.trim());
+}
+
+/**
+ * The question in a bot message that is a question header (formatQuestion),
+ * e.g. from /ask inside an answer thread; undefined for any other message.
+ */
+export function headerQuestion(content: string): string | undefined {
+  return /^We are Borg!\n<@!?\d+> asked:\n/.test(content) ? parseQuestion(content) : undefined;
 }
 
 /** Recovers the question from a starter message made by formatQuestion. */
@@ -169,7 +206,17 @@ const QUEUED_PREFIX = '⏳ Your query is queued';
  * Starts of progressMessage output, so history.ts can skip status messages.
  * The older prefixes keep threads from before the rename working.
  */
-export const STATUS_PREFIXES = [PROGRESS_PREFIX, QUEUED_PREFIX, '🔎 Researching', '⏳ Waiting'];
+/** Reply when a follow-up's thread asker can't be determined right now (not conversation). */
+export const UNVERIFIED_THREAD_REPLY =
+  '⚠️ The origin of this thread could not be verified. Repeat later.';
+
+export const STATUS_PREFIXES = [
+  PROGRESS_PREFIX,
+  QUEUED_PREFIX,
+  UNVERIFIED_THREAD_REPLY,
+  '🔎 Researching',
+  '⏳ Waiting',
+];
 
 /** The status message shown while a question is being researched. */
 export function progressMessage(steps: string[], elapsedMs: number, queued = 0): string {

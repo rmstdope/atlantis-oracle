@@ -69,6 +69,7 @@ const envSchema = z.object({
   LLM_MAX_CONCURRENT: withDefault(z.coerce.number().int().positive(), 1),
   LLM_PLAN_STEP: withDefault(z.stringbool(), 'true'),
   LLM_REVIEW_STEP: withDefault(z.stringbool(), 'true'),
+  LLM_TOPIC_CHECK: withDefault(z.stringbool(), 'true'),
   LLM_LOOKUP_MODE: withDefault(z.enum(['grep', 'guide']), 'grep'),
 
   GAME_REPO_URL: withDefault(z.string().min(1), 'https://github.com/Atlantis-PBEM/Atlantis.git'),
@@ -124,6 +125,8 @@ export interface LlmConfig {
   planStep: boolean;
   /** Review the draft answer against the research before sending it. */
   reviewStep: boolean;
+  /** Reject messages that are not about Atlantis before researching them. */
+  topicCheck: boolean;
   /**
    * How the model finds its way around the code: `grep` searches with
    * search_code, `guide` consults the code guide (read_guide) first.
@@ -252,6 +255,7 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
       maxConcurrent: e.LLM_MAX_CONCURRENT,
       planStep: e.LLM_PLAN_STEP,
       reviewStep: e.LLM_REVIEW_STEP,
+      topicCheck: e.LLM_TOPIC_CHECK,
       lookupMode: e.LLM_LOOKUP_MODE,
     },
     repo: {

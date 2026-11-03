@@ -50,10 +50,15 @@ Discord user ──/ask──▶ Bot ──▶ LLM (OpenAI-compatible API)
    enough to answer. With `LLM_LOOKUP_MODE=guide` it also gets a
    [code guide](guides/atlantis-code.md) that maps game topics to the
    functions and tables that decide them (see below).
+   Before that, a short LLM call checks that the question is about Atlantis
+   at all (`LLM_TOPIC_CHECK`); anything clearly unrelated is turned away
+   privately without research.
 4. The LLM reviews its draft against what it found. It can approve it,
    correct it, or do one more round of research if something is missing.
-5. The bot posts the answer, with source references, in a new thread. Players
-   can ask follow-up questions by replying in the thread.
+5. The bot posts the answer, with source references, in a new thread. The
+   player who asked can ask follow-up questions by replying in the thread.
+   Others can join the discussion there, but the bot neither answers them nor
+   reads their messages as part of the conversation.
 
 The retrieval is *agentic* (the model calls tools) rather than based on
 embeddings. The Atlantis game data mostly lives in large C++ tables where exact
@@ -268,6 +273,7 @@ All configuration is done with environment variables, read from `.env` in develo
 | `LLM_TOOL_OUTPUT_BUDGET` | no | `60000` | Total characters of tool output per question; protects the model's context window |
 | `LLM_PLAN_STEP` | no | `true` | Ask the model for a research plan before it starts looking things up |
 | `LLM_REVIEW_STEP` | no | `true` | Let the model check its draft answer against what it found, and research once more if something is missing |
+| `LLM_TOPIC_CHECK` | no | `true` | Before researching, ask the model in one short call whether the message is about Atlantis, and turn it away if clearly not. It errs towards answering, and a failed check lets the question through. A cost and scope filter, not protection against prompt injection. Measure it with `npm run eval:topic`. |
 | `LLM_LOOKUP_MODE` | no | `grep` | How the model finds its way around the code: `grep` searches with `search_code`; `guide` consults the [code guide](#code-guide) first. Falls back to `grep` when no guide file exists. |
 | `LLM_MAX_CONCURRENT` | no | `1` | Questions researched at the same time; others wait in a queue. Keep at 1 for most local servers. |
 | `GAME_REPO_URL` | no | `https://github.com/Atlantis-PBEM/Atlantis.git` | Game repository to answer from |
@@ -366,7 +372,7 @@ need adjustments in `src/llm/prompts.ts`.
 | Command | Description |
 |---|---|
 | `/ask question:<text> [variant:<name>]` | Ask a question. The answer is posted in a new thread, and a status message shows the research steps while you wait. Used inside a thread, the bot answers in that thread. |
-| Message in an answer thread | Ask a follow-up. The bot uses the thread's recent conversation as context. |
+| Message in an answer thread | Ask a follow-up (only the player who asked; others can talk there without the bot answering). The bot uses the thread's recent conversation as context. |
 | `/report-bug description:<text>` | File a bug report as a public GitHub issue (only when `GITHUB_TOKEN` is set). The channel sees who reported it, the first line and the issue link; errors are only shown to you. New comments on the issue are posted in a thread on the report: comments from the repository's team are quoted, comments from anyone else are only counted. Labels, linked pull requests, closing and other state changes are not posted (`/anomalies` shows the current status). The first line becomes the title; the issue also records your Discord username and, when used in an answer thread, a link to it. Re-run `npm run register-commands` after setting the token. |
 | `/wish description:<text>` | Wish for a feature or change. Works like `/report-bug`, but the issue is titled `[Wish] …` and gets the `GITHUB_WISH_LABELS`. |
 | `/anomalies` | List your bug reports and wishes that are being followed, with their status and labels (only visible to you) |
@@ -383,6 +389,7 @@ ruling and the published rules for your game take precedence.
 npm run dev        # run with auto-reload
 npm run ask -- "…" # ask a question from the terminal
 npm run eval       # answer-quality evals against the configured LLM (slow)
+npm run eval:topic # topic check only: false rejections and what it catches (fast)
 npm run guide:check # report code guide entries that no longer resolve
 npm test           # unit tests (vitest)
 npm run lint       # eslint
@@ -394,7 +401,15 @@ answer for the facts it must contain. It records time and tool use, saves a
 report under `data/evals/`, and compares it with the previous run. Use it to
 compare models, prompts and settings. `--only <id>` and `--tier hard` run a
 subset; `--mode grep|guide` overrides `LLM_LOOKUP_MODE`, and the report
-records the mode so two runs can be compared.
+records the mode so two runs can be compared. A question rejected by the topic
+check fails.
+
+`npm run eval:topic` runs only the topic check. It checks that every eval
+question passes, then runs the labelled messages in `evals/topic.json`:
+informal questions, follow-ups, off-topic requests and injection attempts.
+It reports false rejections separately, because they hit real players.
+Injections that ride on a genuine question are expected to pass; for those,
+answers neutralize links instead (see CLAUDE.md, "Security and abuse").
 
 See [CLAUDE.md](CLAUDE.md) for architecture, conventions and design decisions.
 
