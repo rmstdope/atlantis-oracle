@@ -5,14 +5,15 @@ import { fail, fakeLlm, reply } from '../helpers/fakeLlm.js';
 const ask = (content: string) => [{ role: 'user' as const, content }];
 
 describe('parseVerdict', () => {
-  it('reads one word, ignoring case, punctuation and reasoning', () => {
+  it('reads the one-word reply, ignoring case, formatting and reasoning', () => {
     expect(parseVerdict('ATLANTIS')).toBe('atlantis');
-    expect(parseVerdict('other.')).toBe('other');
+    expect(parseVerdict(' **Other.** ')).toBe('other');
     expect(parseVerdict('<think>Is this ATLANTIS? No.</think>\nOTHER')).toBe('other');
   });
 
-  it('is unclear when the reply has both words or neither', () => {
+  it('is unclear for anything but the one word', () => {
     expect(parseVerdict('ATLANTIS or OTHER')).toBe('unclear');
+    expect(parseVerdict('This asks about the game rules, not other topics.')).toBe('unclear');
     expect(parseVerdict('Sure! Here is a poem.')).toBe('unclear');
     expect(parseVerdict('')).toBe('unclear');
   });
@@ -44,6 +45,14 @@ describe('checkTopic', () => {
     expect(llm.requests[0]).toMatchObject({ model: 'm', temperature: 0 });
     expect(llm.requests[0]!.messages[0]).toMatchObject({ role: 'system' });
     expect(llm.requests[0]).not.toHaveProperty('tools');
+  });
+
+  it('treats a reply cut off by max_tokens as unclear', async () => {
+    const llm = fakeLlm([{ content: 'OTHER', truncated: true }]);
+    expect(await checkTopic({ llm, model: 'm', turns: ask('x') })).toMatchObject({
+      verdict: 'unclear',
+      allowed: true,
+    });
   });
 
   it('lets the question through when the call fails', async () => {

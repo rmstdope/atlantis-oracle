@@ -1,5 +1,5 @@
 import type { ChatTurn } from '../oracle.js';
-import { parseQuestion, STATUS_PREFIXES } from './format.js';
+import { isOffTopicReply, parseQuestion, STATUS_PREFIXES } from './format.js';
 
 /** The parts of a Discord message the history needs; keeps this module testable. */
 export interface HistoryMessage {
@@ -9,7 +9,14 @@ export interface HistoryMessage {
 }
 
 const MAX_TURN_CHARS = 2000;
+/** Messages of the conversation (asker and bot) kept as context. */
 export const HISTORY_LIMIT = 20;
+/**
+ * Thread messages fetched to find them: other players may talk in the thread,
+ * and their messages are dropped, so fetch more than are kept (100 is
+ * Discord's maximum per request).
+ */
+export const HISTORY_FETCH_LIMIT = 100;
 
 function cleanBotMessage(content: string): string {
   // Progress messages from format.progressMessage are not part of the conversation.
@@ -27,6 +34,8 @@ function cleanBotMessage(content: string): string {
  * from the same side are merged (long answers are split across messages).
  * With `askerId`, other players' messages are left out: they can talk in the
  * thread, but they can't steer the answers to someone else's question.
+ * A message the topic check rejected is left out with its rejection, and the
+ * last HISTORY_LIMIT messages of what remains are used.
  */
 export function buildTurns(
   botId: string,
@@ -46,9 +55,18 @@ export function buildTurns(
     const question = starter.authorId === botId ? parseQuestion(starter.content) : starter.content;
     if (question) push('user', question);
   }
+  const kept: HistoryMessage[] = [];
   for (const m of [...messages].sort((a, b) => a.createdTimestamp - b.createdTimestamp)) {
+    if (m.authorId !== botId && askerId && m.authorId !== askerId) continue;
+    if (m.authorId === botId && isOffTopicReply(m.content)) {
+      if (kept.at(-1) && kept.at(-1)!.authorId !== botId) kept.pop();
+      continue;
+    }
+    kept.push(m);
+  }
+  for (const m of kept.slice(-HISTORY_LIMIT)) {
     if (m.authorId === botId) push('assistant', cleanBotMessage(m.content));
-    else if (!askerId || m.authorId === askerId) push('user', m.content.trim());
+    else push('user', m.content.trim());
   }
   for (const t of turns) {
     if (t.content.length > MAX_TURN_CHARS) t.content = `${t.content.slice(0, MAX_TURN_CHARS)}…`;

@@ -91,7 +91,6 @@ export function formatIssueFiled(
   return `<@${userId}> ${FILED[kind]}\n> ${title}\n<${issueUrl}>`;
 }
 
-/** Recovers the question from a starter message made by formatQuestion. */
 /**
  * Who asked: the first mention in the thread's starter message (the bot's
  * question header). The player's question comes after it, so a mention
@@ -105,6 +104,12 @@ export function parseAsker(content: string): string | undefined {
 export const OFF_TOPIC_REPLY =
   'This query is irrelevant to the Collective. We answer questions about Atlantis: its rules, orders and mechanics.';
 
+/** History leaves rejected exchanges out; keep older wordings here if the reply changes. */
+export function isOffTopicReply(content: string): boolean {
+  return content.startsWith('This query is irrelevant to the Collective.');
+}
+
+/** Recovers the question from a starter message made by formatQuestion. */
 export function parseQuestion(content: string): string | undefined {
   const i = content.indexOf(QUESTION_PREFIX);
   if (i === -1) return undefined;

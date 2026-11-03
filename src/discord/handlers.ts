@@ -34,7 +34,7 @@ import {
   threadName,
   variantFromThreadName,
 } from './format.js';
-import { buildTurns, HISTORY_LIMIT, type HistoryMessage } from './history.js';
+import { buildTurns, HISTORY_FETCH_LIMIT, type HistoryMessage } from './history.js';
 import { githubRepoLinks, neutralizeLinks } from './links.js';
 import { RateLimiter } from './rateLimit.js';
 
@@ -178,6 +178,17 @@ export function registerHandlers(client: Client, deps: HandlerDeps): void {
         flags: MessageFlags.Ephemeral,
       });
       return;
+    }
+    // An answer thread belongs to its asker: others' questions would join that conversation.
+    if (channel.isThread() && isAnswerThread(channel)) {
+      const { askerId } = await threadAsker(channel);
+      if (askerId !== interaction.user.id) {
+        await interaction.reply({
+          content: 'This thread serves another drone. Use /ask in the channel to start your own.',
+          flags: MessageFlags.Ephemeral,
+        });
+        return;
+      }
     }
     const limit = rateLimiter.check(interaction.user.id);
     if (!limit.allowed) {
@@ -382,13 +393,43 @@ export function registerHandlers(client: Client, deps: HandlerDeps): void {
     }
   }
 
+  /** Bot-started answer threads (not anomaly or wish threads). */
+  const isAnswerThread = (thread: ThreadChannel) =>
+    thread.ownerId === client.user?.id && !isAnomalyThreadName(thread.name);
+
+  /**
+   * The starter message of an answer thread and who asked: the first mention
+   * in the bot's question header. Unknown when the starter is gone or can't
+   * be fetched; callers then refuse rather than guess.
+   */
+  async function threadAsker(
+    thread: ThreadChannel,
+  ): Promise<{ starter?: Message; askerId?: string }> {
+    let starter: Message | null;
+    try {
+      starter = await thread.fetchStarterMessage();
+    } catch (err) {
+      logger.warn(
+        { err, threadId: thread.id },
+        'Could not fetch the answer thread starter message',
+      );
+      return {};
+    }
+    if (!starter) {
+      logger.warn({ threadId: thread.id }, 'Answer thread has no starter message; asker unknown');
+      return {};
+    }
+    const askerId =
+      starter.author.id === client.user?.id ? parseAsker(starter.content) : starter.author.id;
+    return { starter, askerId };
+  }
+
   async function handleThreadMessage(message: Message<true>, thread: ThreadChannel): Promise<void> {
     const botId = client.user!.id;
     // Only the player who asked can continue; others may talk in the thread
     // without the bot answering or reading along.
-    const starter = await thread.fetchStarterMessage().catch(() => null);
-    const askerId = starter?.author.id === botId ? parseAsker(starter.content) : starter?.author.id;
-    if (!askerId || message.author.id !== askerId) return;
+    const { starter, askerId } = await threadAsker(thread);
+    if (!starter || !askerId || message.author.id !== askerId) return;
 
     const limit = rateLimiter.check(message.author.id);
     if (!limit.allowed) {
@@ -401,10 +442,10 @@ export function registerHandlers(client: Client, deps: HandlerDeps): void {
       content: m.content,
       createdTimestamp: m.createdTimestamp,
     });
-    const recent = await thread.messages.fetch({ limit: HISTORY_LIMIT });
+    const recent = await thread.messages.fetch({ limit: HISTORY_FETCH_LIMIT });
     const turns = buildTurns(
       botId,
-      toHistory(starter!),
+      toHistory(starter),
       [...recent.values()].map(toHistory),
       askerId,
     );
@@ -448,7 +489,7 @@ export function registerHandlers(client: Client, deps: HandlerDeps): void {
     if (!discord.commands.includes('ask')) return;
     if (message.author.bot || !message.inGuild() || !message.channel.isThread()) return;
     const thread = message.channel;
-    if (thread.ownerId !== client.user?.id || isAnomalyThreadName(thread.name)) return;
+    if (!isAnswerThread(thread)) return;
     if (!channelAllowed(thread.id, thread.parentId)) return;
     if (!message.content.trim()) return;
     try {

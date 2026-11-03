@@ -389,13 +389,17 @@ port, outgoing connections only. Its contract with the infra:
   the text of the answer. Keep it that way: add no tools that write, execute
   or fetch URLs.
 - Answer text is model output: `discord/links.ts` keeps only links into the
-  game repo on GitHub (masked links to anything else keep their text, other
-  URLs go into inline code), and answers and progress messages are sent with
-  `SuppressEmbeds`. Only the asker can steer an answer thread.
+  game repo on GitHub. Masked links to anything else keep their text, and
+  other URLs are defanged (`hxxps[:]//evil[.]example`), with no exemption for
+  code (Discord's code-span rules are too subtle to mirror safely). Answers and
+  progress messages are sent with `SuppressEmbeds`. Only the asker can steer an
+  answer thread: their follow-ups only, and `/ask` by others inside it is refused.
 - The topic check (`llm/topic.ts`) limits cost and scope; it is not an
   injection defence. It is an LLM reading attacker text, and an injection can
   ride on a genuine question. It must fail open, and false rejections matter
-  more than misses: check `npm run eval:topic` after changing its prompt.
+  more than misses: check `npm run eval:topic` after changing its prompt. It
+  runs outside the `LLM_MAX_CONCURRENT` limiter on purpose (see
+  `Oracle.screen`).
 - `/report-bug` and `/wish` are the only things that write anywhere: Discord
   commands (never LLM tools) that file a GitHub issue with the operator's
   `GITHUB_TOKEN`. They are enabled only when the token is set (see

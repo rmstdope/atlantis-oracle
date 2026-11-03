@@ -30,6 +30,9 @@ export interface TopicResult {
   verdict: TopicVerdict;
   allowed: boolean;
   ms: number;
+  /** Token usage as reported by the server (0 when it doesn't, or the check is off). */
+  promptTokens: number;
+  completionTokens: number;
   /** Set when the call failed; the question is answered anyway. */
   error?: string;
 }
@@ -64,13 +67,18 @@ export function topicMessage(turns: ChatTurn[]): string {
   return `${context}NEW MESSAGE:\n"""\n${clip(message, MESSAGE_CHARS)}\n"""`;
 }
 
-/** ATLANTIS or OTHER, alone; anything else (both words, neither, prose) is unclear. */
+/**
+ * The whole reply must be the one word (formatting and punctuation aside).
+ * Anything else is unclear and lets the question through: prose that merely
+ * contains "other", both words, or reasoning without <think> tags.
+ */
 export function parseVerdict(content: string): 'atlantis' | 'other' | 'unclear' {
-  const words = new Set(
-    [...stripThinking(content).matchAll(/\b(ATLANTIS|OTHER)\b/gi)].map((m) => m[1]!.toUpperCase()),
-  );
-  if (words.size !== 1) return 'unclear';
-  return words.has('OTHER') ? 'other' : 'atlantis';
+  const word = stripThinking(content)
+    .replace(/[*_`"'.!\s]/g, '')
+    .toUpperCase();
+  if (word === 'ATLANTIS') return 'atlantis';
+  if (word === 'OTHER') return 'other';
+  return 'unclear';
 }
 
 export async function checkTopic(opts: TopicCheckOptions): Promise<TopicResult> {
@@ -90,14 +98,25 @@ export async function checkTopic(opts: TopicCheckOptions): Promise<TopicResult> 
   } as ChatCompletionCreateParamsNonStreaming;
   try {
     const res = await opts.llm.complete(params, opts.signal);
-    const verdict = parseVerdict(res.choices?.[0]?.message?.content ?? '');
-    return { verdict, allowed: verdict !== 'other', ms: Date.now() - started };
+    const choice = res.choices?.[0];
+    // A reply cut off by max_tokens may be half-finished reasoning: never a verdict.
+    const verdict =
+      choice?.finish_reason === 'length' ? 'unclear' : parseVerdict(choice?.message?.content ?? '');
+    return {
+      verdict,
+      allowed: verdict !== 'other',
+      ms: Date.now() - started,
+      promptTokens: res.usage?.prompt_tokens ?? 0,
+      completionTokens: res.usage?.completion_tokens ?? 0,
+    };
   } catch (err) {
     if (opts.signal?.aborted) throw err;
     return {
       verdict: 'failed',
       allowed: true,
       ms: Date.now() - started,
+      promptTokens: 0,
+      completionTokens: 0,
       error: err instanceof Error ? err.message : String(err),
     };
   }

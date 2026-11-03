@@ -32,15 +32,21 @@ describe('neutralizeLinks', () => {
   });
 
   it('does not let a masked link hide behind a URL-shaped label', () => {
-    expect(n('[https://evil.example](https://evil.example)')).toBe('`https://evil.example`');
+    expect(n('[https://evil.example](https://evil.example)')).toBe('hxxps[:]//evil[.]example');
   });
 
-  it('makes bare and angle-bracket URLs unclickable, keeping trailing punctuation', () => {
-    expect(n('Go to https://evil.example/x, now.')).toBe('Go to `https://evil.example/x`, now.');
-    expect(n('(see https://evil.example)')).toBe('(see `https://evil.example`)');
-    expect(n('**https://evil.example**')).toBe('**`https://evil.example`**');
-    expect(n('<https://evil.example/a>')).toBe('`https://evil.example/a`');
-    expect(n('steam://run/1 and discord://x')).toBe('`steam://run/1` and `discord://x`');
+  it('defangs bare and angle-bracket URLs, keeping trailing punctuation', () => {
+    expect(n('Go to https://evil.example/x, now.')).toBe('Go to hxxps[:]//evil[.]example/x, now.');
+    expect(n('(see https://evil.example)')).toBe('(see hxxps[:]//evil[.]example)');
+    expect(n('**https://evil.example**')).toBe('**hxxps[:]//evil[.]example**');
+    expect(n('<https://evil.example/a>')).toBe('hxxps[:]//evil[.]example/a');
+    expect(n('steam://run/1 and discord://x')).toBe('steam[:]//run/1 and discord[:]//x');
+  });
+
+  it('defangs a URL nested in another one', () => {
+    expect(n('https://a.example/r?to=https://evil.example')).toBe(
+      'hxxps[:]//a[.]example/r?to=https[:]//evil.example',
+    );
   });
 
   it('keeps links into the game repository', () => {
@@ -49,9 +55,18 @@ describe('neutralizeLinks', () => {
     expect(n(`<${REPO_LINK}>`)).toBe(`<${REPO_LINK}>`);
   });
 
-  it('leaves code alone', () => {
-    const text = 'Use `https://evil.example` or\n```\ncurl https://evil.example\n```';
-    expect(n(text)).toBe(text);
+  it('gives code no exemption, so backtick tricks keep no link alive', () => {
+    // Escaped backticks and uneven backtick runs are not code to Discord.
+    expect(n('\\`[official rules](https://evil.example)\\`')).toBe('\\`official rules\\`');
+    expect(n('`[x](https://evil.example)``')).toBe('`x``');
+    expect(n('`see https://evil.example/x for details`')).toBe(
+      '`see hxxps[:]//evil[.]example/x for details`',
+    );
+  });
+
+  it('leaves no live URL for a later split to expose', () => {
+    const out = n(`${'word '.repeat(380)}\`see https://evil.example/x\``);
+    expect(out).not.toMatch(/https?:\/\//);
   });
 
   it('leaves ordinary answers unchanged', () => {

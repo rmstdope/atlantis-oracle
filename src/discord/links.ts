@@ -5,9 +5,13 @@
  * `path:line` text), so every other link is made unclickable:
  *
  * - a masked link `[text](url)` keeps only its text;
- * - a bare or `<url>` link is wrapped in inline code, so it shows but can't be clicked.
+ * - any other URL is defanged, `https://evil.example` → `hxxps[:]//evil[.]example`,
+ *   so it still shows but no client links it.
  *
- * Code blocks and inline code are left alone: Discord doesn't link inside them.
+ * Code is not exempt: matching Discord's code-span rules (escapes, backtick
+ * runs) exactly is fragile, and a defanged URL is harmless anywhere. Because
+ * nothing linkable is left, splitting the text into messages afterwards can't
+ * create a link either.
  */
 
 export type LinkFilter = (url: string) => boolean;
@@ -44,31 +48,37 @@ export function githubRepoLinks(repoUrl: string): LinkFilter {
   };
 }
 
-// Code first, so links inside it are skipped; then masked, <angle> and bare links.
+// Masked links, then <angle> links, then any scheme://… URL.
 const TOKENS =
-  /(```[\s\S]*?```|`[^`\n]*`)|\[([^\]\n]*)\]\(\s*<?([^()\s<>]*)>?\s*\)|<([a-z][a-z0-9+.-]*:\/\/[^\s<>]+)>|((?:https?|ftp|steam|discord):\/\/[^\s<>`]+)/gi;
+  /\[([^\]\n]*)\]\(\s*<?([^()\s<>]*)>?\s*\)|<([a-z][a-z0-9+.-]*:\/\/[^\s<>]+)>|([a-z][a-z0-9+.-]*:\/\/[^\s<>`]+)/gi;
 
 /** Linkifiers leave trailing punctuation out of a bare URL; so do we. */
 function splitTrailing(url: string): [string, string] {
-  const m = /[.,;:!?'")\]*_~]+$/.exec(url);
+  const m = /[.,;:!?'")\]*_~`]+$/.exec(url);
   return m ? [url.slice(0, m.index), m[0]] : [url, ''];
 }
 
-const inert = (url: string) => `\`${url}\``;
+/** Every `://` (a redirect can nest a second URL) and the host's dots. */
+function defang(url: string): string {
+  const i = url.indexOf('://');
+  const rest = url.slice(i + 3);
+  const host = /^[^/?#]*/.exec(rest)![0];
+  const scheme = url.slice(0, i).replace(/^http/i, 'hxxp');
+  return `${scheme}[:]//${host.replace(/\./g, '[.]')}${rest.slice(host.length).replaceAll('://', '[:]//')}`;
+}
 
 export function neutralizeLinks(text: string, allowed: LinkFilter): string {
   return text.replace(
     TOKENS,
-    (match, code?: string, label?: string, target?: string, angled?: string, bare?: string) => {
-      if (code !== undefined) return match;
+    (match, label?: string, target?: string, angled?: string, bare?: string) => {
       if (label !== undefined) {
         if (target && allowed(target)) return match;
         // The label itself may be a URL: `[https://evil](https://evil)`.
         return neutralizeLinks(label, allowed);
       }
-      if (angled !== undefined) return allowed(angled) ? match : inert(angled);
+      if (angled !== undefined) return allowed(angled) ? match : defang(angled);
       const [url, trailing] = splitTrailing(bare!);
-      return (allowed(url) ? url : inert(url)) + trailing;
+      return (allowed(url) ? url : defang(url)) + trailing;
     },
   );
 }

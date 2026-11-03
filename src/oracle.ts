@@ -79,11 +79,18 @@ export class Oracle {
   /**
    * Is the last turn about Atlantis? Run before `ask`; a rejected message
    * should not be researched. Never throws (except when aborted): a failed
-   * check lets the message through. Not queued behind LLM_MAX_CONCURRENT, so
-   * an off-topic message is turned away without waiting for other answers.
+   * check lets the message through.
+   *
+   * Deliberately not queued behind LLM_MAX_CONCURRENT: queued, a rejection
+   * would wait for every answer ahead of it, and /ask's deferred reply (which
+   * the check runs inside) expires after 15 minutes. The cost is one small
+   * extra request in parallel. A single-slot local server queues it itself, so
+   * there the check may wait for the running research call.
    */
   async screen(turns: ChatTurn[], signal?: AbortSignal): Promise<TopicResult> {
-    if (!this.config.llm.topicCheck) return { verdict: 'atlantis', allowed: true, ms: 0 };
+    if (!this.config.llm.topicCheck) {
+      return { verdict: 'atlantis', allowed: true, ms: 0, promptTokens: 0, completionTokens: 0 };
+    }
     const result = await checkTopic({
       llm: this.llm,
       model: this.config.llm.model,
