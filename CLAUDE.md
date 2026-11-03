@@ -15,8 +15,9 @@ The LLM backend must stay swappable: hosted OpenAI, or a local server such as
 Ollama, llama.cpp, vLLM or LM Studio. This is a core requirement, not an extra
 (see "LLM portability" below).
 
-Status: MVP. `/ask`, thread follow-ups, `/collective-info`, `/report-bug`, `/wish`, `/anomalies` and `/latest-release` work. Planned next:
-@mention entry point, Docker image, an evals harness, and turning `path:line`
+Status: MVP. `/ask`, thread follow-ups, `/collective-info`, `/report-bug`, `/wish`, `/anomalies` and `/latest-release` work. It ships as a headless
+Docker worker deployed by rmstdope-infra (see "Deployment"). Planned next:
+@mention entry point, an evals harness, and turning `path:line`
 citations into GitHub links. Keep this file in sync with the code: if a change
 alters the layout or conventions below, update this file in the same change.
 
@@ -62,7 +63,9 @@ and `npx prettier --check .`.
 
 ```
 src/
-  index.ts              entry: load config, sync repo, start Discord client
+  index.ts              entry: load config, sync repo, start Discord client and heartbeat
+  heartbeat.ts          liveness file in /tmp, written while the gateway is Ready
+  health.ts             `node dist/health.js`: container healthcheck, exit 0 if the heartbeat is fresh
   cli.ts                `npm run ask`
   config.ts             zod schema for all env vars; the only place process.env is read
   logger.ts
@@ -70,7 +73,9 @@ src/
   discord/
     client.ts           discord.js client (intents, allowedMentions: none)
     commands.ts         slash command definitions (/ask, /collective-info, /report-bug, /wish, /anomalies, /latest-release), filtered by ENABLED_COMMANDS
-    register.ts         script behind `npm run register-commands`
+    registration.ts     registerCommands(): PUT the definitions (guild or global)
+    register.ts         script behind `npm run register-commands`; index.ts also calls
+                        registerCommands() at start when DISCORD_REGISTER_COMMANDS is set
     handlers.ts         all slash commands and thread follow-ups -> Oracle
     format.ts           message splitting, footer, question header, thread name <-> variant
     history.ts          rebuilds conversation turns from a Discord thread
@@ -124,6 +129,9 @@ native/
   compendium.cpp        prints the engine's player-facing descriptions (ItemDescription,
                         ShowSkill::Report, ObjectDescription) for every enabled entry
 evals/questions.json    eval questions with fact regexes and ground truth
+deploy/runtime/         rmstdope-infra worker bundle: app.json, compose.json, empty route.caddy
+Dockerfile              worker image (node:22-bookworm-slim + git, make, g++; user node; /app/data volume)
+.github/workflows/ci.yml  checks, container smoke test; on main: publish image by digest + deployment-manifest
 test/                   mirrors src/; helpers/ has the fixture path and a scripted fake LLM,
                         fixtures/game-repo/ is a tiny fake Atlantis repo
 ```
@@ -321,6 +329,29 @@ them in one place (`llm/prompts.ts`).
   voice but keep times, links and next steps plain. Progress prefixes live in
   `format.STATUS_PREFIXES`; keep old ones there when renaming, so `history.ts`
   still skips them in older threads.
+
+## Deployment
+
+The bot runs on rmstdope.eu as an rmstdope-infra `worker` app: no domain, no
+port, outgoing connections only. Its contract with the infra:
+
+- Image `ghcr.io/rmstdope/atlantis-oracle-worker`, published by digest from
+  `main` and labelled `org.opencontainers.image.revision=<sha>`; the
+  `deployment-manifest` artifact holds `deployment.json`
+  (`{"revision", "images": {"worker": ...}}`). The infra checks the label
+  against the manifest instead of an HTTP marker.
+- Health is Docker health only: `node dist/health.js` checks the heartbeat. Keep
+  it dependency-free (no config, no network) and keep the heartbeat tied to the
+  gateway status, not to startup progress.
+- `deploy/runtime/` must pass rmstdope-infra's `validate_worker`: no `networks`,
+  no ports, no `$` outside `image` and `env_file`, named volume
+  `rmstdope-atlantis-oracle-*`, empty `route.caddy`. `start_timeout_seconds`
+  is at most 1200 and must cover a first start on an empty volume (clone plus
+  rules build for every variant: ~15 s on 4 cores with upstream `stable`).
+- Everything the bot keeps goes under `/app/data` (relative `./data` paths with
+  WORKDIR `/app`) and stays backward compatible: rollback runs the previous
+  image on the same volume.
+- Exactly one instance per Discord token.
 
 ## Conventions
 

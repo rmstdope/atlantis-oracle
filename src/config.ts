@@ -34,6 +34,7 @@ const envSchema = z.object({
   DISCORD_TOKEN: optionalString,
   DISCORD_CLIENT_ID: optionalString,
   DISCORD_GUILD_ID: optionalString,
+  DISCORD_REGISTER_COMMANDS: withDefault(z.stringbool(), 'false'),
   ALLOWED_CHANNEL_IDS: commaList,
   // Unset = every command whose requirements are configured.
   ENABLED_COMMANDS: z.preprocess(
@@ -184,6 +185,8 @@ export interface DiscordConfig {
   token: string;
   clientId: string;
   guildId: string | undefined;
+  /** Push the slash command definitions to Discord at every start. */
+  registerOnStart: boolean;
   allowedChannelIds: string[];
   rateLimitPerUserPerMinute: number;
   /** Slash commands to register and answer; thread follow-ups belong to `ask`. */
@@ -201,7 +204,10 @@ export interface Config {
   defaultVariant: string;
   logLevel: 'debug' | 'info' | 'warn' | 'error';
   discord: Partial<DiscordConfig> &
-    Pick<DiscordConfig, 'allowedChannelIds' | 'rateLimitPerUserPerMinute' | 'commands'>;
+    Pick<
+      DiscordConfig,
+      'allowedChannelIds' | 'rateLimitPerUserPerMinute' | 'commands' | 'registerOnStart'
+    >;
 }
 
 export class ConfigError extends Error {}
@@ -286,6 +292,7 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
       token: e.DISCORD_TOKEN,
       clientId: e.DISCORD_CLIENT_ID,
       guildId: e.DISCORD_GUILD_ID,
+      registerOnStart: e.DISCORD_REGISTER_COMMANDS,
       allowedChannelIds: e.ALLOWED_CHANNEL_IDS,
       rateLimitPerUserPerMinute: e.RATE_LIMIT_PER_USER_PER_MINUTE,
       commands: [...new Set(commands)],

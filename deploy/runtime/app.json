@@ -1,0 +1,15 @@
+{
+  "name": "atlantis-oracle",
+  "profile": "worker",
+  "stateful": true,
+  "migration_policy": "backward-compatible",
+  "start_timeout_seconds": 1200,
+  "deployment": {
+    "repository": "rmstdope/atlantis-oracle",
+    "workflow": "ci.yml",
+    "branch": "main"
+  },
+  "services": {
+    "worker": { "repository": "ghcr.io/rmstdope/atlantis-oracle-worker" }
+  }
+}

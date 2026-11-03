@@ -173,6 +173,62 @@ that it runs `git pull` on the interval set by `GAME_REPO_SYNC_INTERVAL_MINUTES`
 The bot owns `GAME_REPO_DIR`: each sync hard-resets it to the remote and
 discards local changes. Don't point it at a working copy you edit.
 
+### Running in Docker
+
+The `Dockerfile` builds a headless worker image: no ports, Node 22 with `git`,
+`make` and `g++`, running as the unprivileged `node` user. All state lives in
+`/app/data` (the game clone, the built rules and the two JSON stores), so mount
+a volume there. Settings come from the environment, e.g. an env file:
+
+```sh
+docker build -t atlantis-oracle .
+docker run -d --init --env-file bot.env -v oracle-data:/app/data atlantis-oracle
+```
+
+Set `DISCORD_REGISTER_COMMANDS=true` in that file so commands are registered at
+start, and point `OPENAI_BASE_URL` at an endpoint the container can reach
+(`localhost` is the container itself).
+
+The first start on an empty volume clones the game repository and builds the
+rules and compendium for every variant: about 15 seconds on four cores, longer
+on a small VPS. Later starts reuse the volume. Set `GAME_REPO_BRANCH=stable`
+(or a fork's branch): upstream's default branch `master` is stale, and the
+compendium doesn't build against it. The container is healthy while it is connected to
+Discord: the bot touches a heartbeat file in `/tmp` every 20 seconds and the
+healthcheck, `node dist/health.js`, checks that it is less than 90 seconds old.
+It stops cleanly on SIGTERM, also during that first start.
+
+Run only **one** instance per bot token. Two instances would both answer every
+question and both post every GitHub comment and release announcement. To move
+an existing bot, stop the old one and copy `data/anomalies.json` and
+`data/latest-release.json` into the new volume. Without them, tracked reports
+are no longer followed and the current release is announced again.
+
+### Deploying to rmstdope.eu
+
+CI (`.github/workflows/ci.yml`) runs the checks and a container smoke test on
+every push and pull request. On `main` it publishes
+`ghcr.io/rmstdope/atlantis-oracle-worker` by digest, labelled with
+`org.opencontainers.image.revision`, and uploads the `deployment-manifest`
+artifact. `deploy/runtime/` is the rmstdope-infra `worker` bundle (`app.json`,
+`compose.json`, an empty `route.caddy`). It reads settings from
+`/srv/rmstdope/secrets/atlantis-oracle/bot.env` and keeps state in the volume
+`rmstdope-atlantis-oracle-data`. On the VPS, once that file exists (mode 0600):
+
+```sh
+rmstdope-deploy app register atlantis-oracle --bundle deploy/runtime
+rmstdope-deploy validate atlantis-oracle
+rmstdope-deploy release atlantis-oracle --latest
+rmstdope-deploy auto enroll atlantis-oracle
+rmstdope-deploy auto resume atlantis-oracle
+```
+
+`start_timeout_seconds` (1200) and the healthcheck's `start_period` are
+generous upper limits for the first start's build. A healthy start is detected
+as soon as the bot connects, so they only delay the verdict on a start that
+fails. If you change `compose.json` or `app.json`, the
+registration must be renewed through rmstdope-infra's change procedure.
+
 ### Trying it without Discord
 
 `npm run ask` runs the same research-and-answer loop in the terminal and
@@ -195,8 +251,9 @@ All configuration is done with environment variables, read from `.env` in develo
 | `DISCORD_TOKEN` | yes | | Bot token |
 | `DISCORD_CLIENT_ID` | yes | | Application ID, used to register slash commands |
 | `DISCORD_GUILD_ID` | no | | Register commands to one server only. They update instantly, which is useful in development. If unset, commands are registered globally. |
+| `DISCORD_REGISTER_COMMANDS` | no | `false` | Push the slash command definitions to Discord at every start, after the first repo sync, so there is no separate `npm run register-commands` step. Meant for deployments; global commands can take up to an hour to update. |
 | `ALLOWED_CHANNEL_IDS` | no | *(all)* | Comma-separated channel IDs where the bot answers |
-| `ENABLED_COMMANDS` | no | *(all)* | Comma-separated slash commands to offer: `ask`, `collective-info`, `report-bug`, `wish`, `anomalies`, `latest-release`. If unset, all are offered, except `report-bug`, `wish` and `anomalies` when `GITHUB_TOKEN` is unset, and `anomalies` when `GITHUB_POLL_INTERVAL_MINUTES` is `0`. Disabling `ask` also disables follow-ups in answer threads. Run `npm run register-commands` after changing it. |
+| `ENABLED_COMMANDS` | no | *(all)* | Comma-separated slash commands to offer: `ask`, `collective-info`, `report-bug`, `wish`, `anomalies`, `latest-release`. If unset, all are offered, except `report-bug`, `wish` and `anomalies` when `GITHUB_TOKEN` is unset, and `anomalies` when `GITHUB_POLL_INTERVAL_MINUTES` is `0`. Disabling `ask` also disables follow-ups in answer threads. Run `npm run register-commands` after changing it (or set `DISCORD_REGISTER_COMMANDS`). |
 | `OPENAI_BASE_URL` | no | `https://api.openai.com/v1` | Any OpenAI-compatible endpoint |
 | `OPENAI_API_KEY` | yes* | | API key. *Local servers usually accept any non-empty value. |
 | `LLM_MODEL` | yes | | Model name as the endpoint knows it, e.g. `gpt-4.1-mini`, `qwen3:32b` |

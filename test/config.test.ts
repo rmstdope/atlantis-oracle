@@ -26,6 +26,7 @@ describe('loadConfig', () => {
     expect(c.defaultVariant).toBe('standard');
     expect(c.discord.allowedChannelIds).toEqual([]);
     expect(c.discord.rateLimitPerUserPerMinute).toBe(3);
+    expect(c.discord.registerOnStart).toBe(false);
     expect(c.github).toBeUndefined();
     expect(c.discord.commands).toEqual(['ask', 'collective-info', 'latest-release']);
     expect(c.hud).toEqual({
@@ -103,6 +104,12 @@ describe('loadConfig', () => {
     expect(() => loadConfig({ ...minimal, GITHUB_ISSUES_REPO: 'https://github.com/o/r' })).toThrow(
       ConfigError,
     );
+  });
+
+  it('registers commands at start when asked', () => {
+    expect(
+      loadConfig({ ...minimal, DISCORD_REGISTER_COMMANDS: 'true' }).discord.registerOnStart,
+    ).toBe(true);
   });
 
   it('treats empty strings as unset', () => {

@@ -1,9 +1,8 @@
 import 'dotenv/config';
-import { REST, Routes } from 'discord.js';
 import { loadConfig, requireDiscord } from '../config.js';
 import { createLogger } from '../logger.js';
 import { GameRepo } from '../repo/sync.js';
-import { buildCommands } from './commands.js';
+import { registerCommands } from './registration.js';
 
 /** `npm run register-commands`: pushes slash command definitions to Discord. */
 async function main(): Promise<void> {
@@ -13,20 +12,7 @@ async function main(): Promise<void> {
 
   const repo = new GameRepo(config.repo, logger);
   await repo.sync();
-  const commands = buildCommands(repo.variants, discord.commands);
-
-  const rest = new REST().setToken(discord.token);
-  const route = discord.guildId
-    ? Routes.applicationGuildCommands(discord.clientId, discord.guildId)
-    : Routes.applicationCommands(discord.clientId);
-  await rest.put(route, { body: commands });
-  logger.info(
-    {
-      commands: commands.map((c) => c.name),
-      scope: discord.guildId ? `guild ${discord.guildId}` : 'global',
-    },
-    'Registered slash commands',
-  );
+  await registerCommands(discord, repo.variants, logger);
 }
 
 main().catch((err: unknown) => {

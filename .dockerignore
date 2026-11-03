@@ -1,0 +1,9 @@
+# Only what the image build needs; never secrets or local state.
+*
+!package.json
+!package-lock.json
+!tsconfig.json
+!tsconfig.build.json
+!src/
+!guides/
+!native/

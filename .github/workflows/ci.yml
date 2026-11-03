@@ -1,0 +1,118 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm test
+      - run: npx prettier --check .
+
+  container-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build the worker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          platforms: linux/amd64
+          tags: atlantis-oracle:smoke
+          build-args: VCS_REF=${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Check the runtime tools, the health check and the revision label
+        env:
+          REVISION: ${{ github.sha }}
+        run: |
+          set -eu
+          docker run --rm atlantis-oracle:smoke sh -c 'git --version && make --version | head -1 && g++ --version | head -1 && id -un'
+          # Not connected to Discord, so the health check must fail.
+          if docker run --rm atlantis-oracle:smoke node dist/health.js; then
+            echo 'health check passed without a heartbeat' >&2; exit 1
+          fi
+          label=$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' atlantis-oracle:smoke)
+          test "$label" = "$REVISION"
+
+  publish-image:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [check, container-smoke]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build and publish the worker image
+        id: image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          platforms: linux/amd64
+          tags: ghcr.io/rmstdope/atlantis-oracle-worker:sha-${{ github.sha }}
+          build-args: VCS_REF=${{ github.sha }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/rmstdope/atlantis-oracle
+            org.opencontainers.image.revision=${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Write deployment manifest
+        env:
+          IMAGE_DIGEST: ${{ steps.image.outputs.digest }}
+          REVISION: ${{ github.sha }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          Path("deployment.json").write_text(json.dumps({
+              "revision": os.environ["REVISION"],
+              "images": {
+                  "worker": "ghcr.io/rmstdope/atlantis-oracle-worker@" + os.environ["IMAGE_DIGEST"]
+              }
+          }) + "\n")
+          PY
+      - name: Upload deployment manifest
+        uses: actions/upload-artifact@v4
+        with:
+          name: deployment-manifest
+          path: deployment.json
+          if-no-files-found: error
+          retention-days: 90
+          overwrite: true
+      - name: Report immutable deployment reference
+        env:
+          IMAGE_DIGEST: ${{ steps.image.outputs.digest }}
+          REVISION: ${{ github.sha }}
+        run: |
+          {
+            echo '## Manual deployment'
+            echo '```sh'
+            echo "rmstdope-deploy release atlantis-oracle --image ghcr.io/rmstdope/atlantis-oracle-worker@${IMAGE_DIGEST} --revision ${REVISION}"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
