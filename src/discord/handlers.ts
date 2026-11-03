@@ -24,6 +24,7 @@ import { ANOMALIES, ASK, INFO, LATEST_RELEASE, REPORT_BUG, WISH } from './comman
 import {
   describeToolCall,
   footer,
+  formatInfo,
   formatIssueFiled,
   formatRelease,
   PHASE_STEPS,
@@ -282,19 +283,21 @@ export function registerHandlers(client: Client, deps: HandlerDeps): void {
 
   async function handleInfo(interaction: ChatInputCommandInteraction): Promise<void> {
     const { repo, config } = deps;
-    const synced = repo.lastSyncedAt
-      ? `<t:${Math.floor(repo.lastSyncedAt.getTime() / 1000)}:R>`
-      : 'never';
-    const lines = [
-      `**Repository:** <${config.repo.url}> (${repo.branch || 'default branch'})`,
-      `**Commit:** \`${repo.commit.slice(0, 10)}\`, synced ${synced}`,
-      `**Variants:** ${repo.variants.join(', ') || 'none detected'} (default: ${config.defaultVariant})`,
-      `**Model:** \`${config.llm.model}\` via ${new URL(config.llm.baseURL).host}`,
-      `**Queue:** ${deps.oracle.queueLength} waiting`,
-    ];
+    const content = formatInfo({
+      commands: discord.commands,
+      repoUrl: config.repo.url,
+      branch: repo.branch,
+      commit: repo.commit,
+      syncedAt: repo.lastSyncedAt,
+      variants: repo.variants,
+      defaultVariant: config.defaultVariant,
+      model: config.llm.model,
+      llmHost: new URL(config.llm.baseURL).host,
+      queueLength: deps.oracle.queueLength,
+    });
     await interaction.reply({
-      content: lines.join('\n'),
-      flags: MessageFlags.Ephemeral,
+      content,
+      flags: MessageFlags.Ephemeral | NO_EMBEDS,
       allowedMentions: NO_MENTIONS,
     });
   }

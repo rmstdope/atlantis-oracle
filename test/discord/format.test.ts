@@ -3,6 +3,7 @@ import {
   describeToolCall,
   footer,
   progressMessage,
+  formatInfo,
   formatIssueFiled,
   formatRelease,
   formatQuestion,
@@ -211,5 +212,52 @@ describe('formatQuestion', () => {
     const header = formatQuestion('123', 'x'.repeat(5000));
     expect(header.length).toBeLessThanOrEqual(2000);
     expect(parseQuestion(header)).toMatch(/^x+…$/);
+  });
+});
+
+describe('formatInfo', () => {
+  const base = {
+    commands: ['ask', 'collective-info', 'latest-release'] as const,
+    repoUrl: 'https://github.com/Atlantis-PBEM/Atlantis.git',
+    branch: 'stable',
+    commit: '0123456789abcdef',
+    syncedAt: new Date(1_700_000_000_000),
+    variants: ['standard', 'neworigins'],
+    defaultVariant: 'standard',
+    model: 'test-model',
+    llmHost: 'api.example.com',
+    queueLength: 2,
+  };
+
+  it('introduces the Collective, lists enabled commands and the current state', () => {
+    const text = formatInfo(base);
+    expect(text).toContain('We are **The Collective**');
+    expect(text).toContain('`/ask question:<text>');
+    expect(text).toContain('`/latest-release`');
+    expect(text).toContain('`/collective-info`');
+    expect(text).not.toContain('/report-bug');
+    expect(text).not.toContain('/wish');
+    expect(text).not.toContain('/anomalies');
+    expect(text).toContain('`0123456789`, synced <t:1700000000:R>');
+    expect(text).toContain('standard, neworigins (default: standard)');
+    expect(text).toContain('`test-model` via api.example.com');
+    expect(text).toContain('2 waiting');
+    expect(text.length).toBeLessThanOrEqual(2000);
+  });
+
+  it('fits in one Discord message with every command enabled and no sync yet', () => {
+    const text = formatInfo({
+      ...base,
+      commands: ['ask', 'collective-info', 'report-bug', 'wish', 'anomalies', 'latest-release'],
+      branch: '',
+      syncedAt: undefined,
+      variants: [],
+    });
+    expect(text).toContain('/report-bug');
+    expect(text).toContain('/anomalies');
+    expect(text).toContain('synced never');
+    expect(text).toContain('none detected');
+    expect(text).toContain('(default branch)');
+    expect(text.length).toBeLessThanOrEqual(2000);
   });
 });

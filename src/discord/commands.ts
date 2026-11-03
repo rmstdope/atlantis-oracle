@@ -45,7 +45,7 @@ export function buildCommands(
 
   const info = new SlashCommandBuilder()
     .setName(INFO)
-    .setDescription('Show the game repository, commit and model The Collective uses');
+    .setDescription('Learn what The Collective is, its commands, and the source and model it uses');
 
   const reportBug = new SlashCommandBuilder()
     .setName(REPORT_BUG)

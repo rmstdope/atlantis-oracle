@@ -78,7 +78,8 @@ src/
     register.ts         script behind `npm run register-commands`; index.ts also calls
                         registerCommands() at start when DISCORD_REGISTER_COMMANDS is set
     handlers.ts         all slash commands and thread follow-ups -> Oracle
-    format.ts           message splitting, footer, question header, thread name <-> variant
+    format.ts           message splitting, footer, question header, thread name <-> variant,
+                        /collective-info text
     history.ts          rebuilds conversation turns from a Discord thread (asker and bot only)
     links.ts            neutralizeLinks(): answers may only link into the game repo
     rateLimit.ts        per-user sliding window
