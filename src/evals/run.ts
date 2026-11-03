@@ -139,7 +139,7 @@ async function main(): Promise<void> {
         id: q.id,
         tier: q.tier,
         answer: r.text,
-        ms: topic.ms + r.ms,
+        ms: (topic.call?.ms ?? 0) + r.ms,
         iterations: r.iterations,
         toolCalls: r.toolCalls.length,
         hitIterationCap: r.hitIterationCap,

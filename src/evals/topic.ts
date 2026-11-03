@@ -56,7 +56,7 @@ async function main(): Promise<void> {
       maxTokens: config.llm.maxTokens,
       thinking: config.llm.thinking,
     });
-    ms += r.ms;
+    ms += r.call?.ms ?? 0;
     const got = r.allowed ? 'atlantis' : 'other';
     const ok = c.expect === 'either' || got === c.expect;
     if (!ok) wrong++;
@@ -64,7 +64,7 @@ async function main(): Promise<void> {
     const mark = c.expect === 'either' ? '·' : ok ? '✅' : '❌';
     console.log(
       `${mark} ${c.id.padEnd(32)} expected ${c.expect.padEnd(8)} got ${r.verdict}` +
-        ` (${r.ms} ms)${r.call?.truncated ? ' TRUNCATED' : ''}${r.call?.error ? ` ERROR ${r.call.error}` : ''}`,
+        ` (${r.call?.ms ?? 0} ms)${r.call?.truncated ? ' TRUNCATED' : ''}${r.call?.error ? ` ERROR ${r.call.error}` : ''}`,
     );
   }
   const scored = cases.filter((c) => c.expect !== 'either').length;

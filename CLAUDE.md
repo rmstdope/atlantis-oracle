@@ -144,13 +144,13 @@ test/                   mirrors src/; helpers/ has the fixture path and a script
 ### Request flow
 
 1. `discord/handlers.ts` receives `/ask` or a message in a bot-owned thread. It
-   checks the channel allowlist and the rate limit. For `/ask` it calls
-   `deferReply()` before anything that needs Discord or the LLM (Discord gives
-   only 3 seconds before the interaction expires). Then, inside an answer
-   thread, only that thread's asker may use `/ask`, and `oracle.screen()` (the
-   topic check, `LLM_TOPIC_CHECK`) runs. A refusal deletes the deferred reply and
-   answers privately. Otherwise it edits the reply into a question header and
-   starts a thread from it. The thread name ends in ` · <variant>`, so
+   checks the channel allowlist; inside an answer thread, only that thread's
+   asker may use `/ask` (cached asker, else a fetch limited to 2 s, because
+   Discord gives only 3 seconds before the interaction expires); then the rate
+   limit. These refusals are private and cost no rate-limit slot. For `/ask` it
+   then calls `deferReply()` and runs `oracle.screen()` (the topic check,
+   `LLM_TOPIC_CHECK`): a rejection swaps the deferred reply for a private one.
+   Otherwise it edits the reply into a question header and starts a thread from it. The thread name ends in ` · <variant>`, so
    follow-ups need no stored state.
 2. Follow-ups are accepted only from the asker, whose ID is the first mention
    in the thread's starter message (`format.parseAsker`, cached per thread);

@@ -54,7 +54,7 @@ async function main(): Promise<void> {
   const turns = [{ role: 'user' as const, content: question }];
   const topic = await oracle.screen(turns);
   if (!topic.allowed) {
-    console.log(`Rejected by the topic check (LLM_TOPIC_CHECK) in ${topic.ms} ms.`);
+    console.log(`Rejected by the topic check (LLM_TOPIC_CHECK) in ${topic.call?.ms ?? 0} ms.`);
     return;
   }
   if (topic.verdict !== 'atlantis') {

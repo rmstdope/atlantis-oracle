@@ -104,9 +104,14 @@ export function parseAsker(content: string): string | undefined {
 export const OFF_TOPIC_REPLY =
   'This query is irrelevant to the Collective. We answer questions about Atlantis: its rules, orders and mechanics.';
 
-/** History leaves rejected exchanges out; keep older wordings here if the reply changes. */
+/**
+ * History leaves rejected exchanges out. The whole message must be a known
+ * rejection, so an answer that merely opens the same way stays; keep older
+ * wordings in the list if the reply changes.
+ */
+const OFF_TOPIC_REPLIES = [OFF_TOPIC_REPLY];
 export function isOffTopicReply(content: string): boolean {
-  return content.startsWith('This query is irrelevant to the Collective.');
+  return OFF_TOPIC_REPLIES.includes(content.trim());
 }
 
 /** Recovers the question from a starter message made by formatQuestion. */

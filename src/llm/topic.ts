@@ -29,7 +29,6 @@ export type TopicVerdict = 'atlantis' | 'other' | 'unclear' | 'failed';
 export interface TopicResult {
   verdict: TopicVerdict;
   allowed: boolean;
-  ms: number;
   /** The LLM call, as the agent records its own; absent when the check is off. */
   call?: LlmCallRecord;
 }
@@ -115,10 +114,10 @@ export async function checkTopic(opts: TopicCheckOptions): Promise<TopicResult> 
       completionTokens: res.usage?.completion_tokens ?? 0,
       ...(truncated ? { truncated } : {}),
     });
-    return { verdict, allowed: verdict !== 'other', ms: call.ms, call };
+    return { verdict, allowed: verdict !== 'other', call };
   } catch (err) {
     if (opts.signal?.aborted) throw err;
     const call = record({ error: err instanceof Error ? err.message : String(err) });
-    return { verdict: 'failed', allowed: true, ms: call.ms, call };
+    return { verdict: 'failed', allowed: true, call };
   }
 }

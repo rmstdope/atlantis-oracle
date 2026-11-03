@@ -71,6 +71,16 @@ export function registerHandlers(client: Client, deps: HandlerDeps): void {
 
   // Answers may only link into the game repository.
   const safeLinks = githubRepoLinks(deps.config.repo.url);
+  /** Swaps a deferred public reply for a private message (failures, refusals). */
+  const replacePrivately = async (interaction: ChatInputCommandInteraction, content: string) => {
+    await interaction.deleteReply().catch(() => {});
+    await interaction.followUp({
+      content,
+      flags: MessageFlags.Ephemeral,
+      allowedMentions: NO_MENTIONS,
+    });
+  };
+
   const retryText = (ms: number) =>
     `Your queries exceed acceptable parameters. Repeat in ${Math.ceil(ms / 1000)}s.`;
 
@@ -179,6 +189,21 @@ export function registerHandlers(client: Client, deps: HandlerDeps): void {
       });
       return;
     }
+    // An answer thread belongs to its asker: others' questions would join that
+    // conversation. Checked before the rate limit and before anything public,
+    // so a refusal costs nothing and leaves no trace in the thread.
+    if (channel.isThread() && isAnswerThread(channel)) {
+      const askerId = await askerWithin(channel, ASKER_LOOKUP_MS);
+      if (askerId !== interaction.user.id) {
+        await interaction.reply({
+          content: askerId
+            ? 'This thread serves another drone. Use /ask in the channel to start your own.'
+            : 'The origin of this thread cannot be verified. Use /ask in the channel.',
+          flags: MessageFlags.Ephemeral,
+        });
+        return;
+      }
+    }
     const limit = rateLimiter.check(interaction.user.id);
     if (!limit.allowed) {
       await interaction.reply({
@@ -192,33 +217,12 @@ export function registerHandlers(client: Client, deps: HandlerDeps): void {
       interaction.options.getString('variant') ??
         (channel.isThread() ? variantFromThreadName(channel.name) : undefined),
     );
-    // Checks that need Discord or the LLM come after the defer (3-second deadline).
-    // A refusal replaces the deferred public reply with a private one.
+    // The topic check takes longer than Discord's 3 seconds: defer first, and
+    // swap the public placeholder for a private reply if it rejects.
     await interaction.deferReply();
-    const refuse = async (content: string) => {
-      await interaction.deleteReply().catch(() => {});
-      await interaction.followUp({
-        content,
-        flags: MessageFlags.Ephemeral,
-        allowedMentions: NO_MENTIONS,
-      });
-    };
-    // An answer thread belongs to its asker: others' questions would join that conversation.
-    if (channel.isThread() && isAnswerThread(channel)) {
-      const { askerId } = await threadAsker(channel);
-      if (askerId !== interaction.user.id) {
-        await refuse(
-          askerId
-            ? 'This thread serves another drone. Use /ask in the channel to start your own.'
-            : 'The origin of this thread cannot be verified. Use /ask in the channel.',
-        );
-        return;
-      }
-    }
     const turns: ChatTurn[] = [{ role: 'user', content: question }];
-    // Off-topic questions are turned away privately, before anything is posted.
     if (!(await deps.oracle.screen(turns)).allowed) {
-      await refuse(OFF_TOPIC_REPLY);
+      await replacePrivately(interaction, OFF_TOPIC_REPLY);
       return;
     }
     const header = await interaction.editReply({
@@ -349,12 +353,7 @@ export function registerHandlers(client: Client, deps: HandlerDeps): void {
     } catch (err) {
       logger.error({ err, repo: github.repo, kind }, 'Failed to file issue');
       // Only the user needs to know; drop the public placeholder.
-      await interaction.deleteReply().catch(() => {});
-      await interaction.followUp({
-        content: texts.failed,
-        flags: MessageFlags.Ephemeral,
-        allowedMentions: NO_MENTIONS,
-      });
+      await replacePrivately(interaction, texts.failed);
     }
   }
 
@@ -405,7 +404,7 @@ export function registerHandlers(client: Client, deps: HandlerDeps): void {
 
   /**
    * Asker per answer thread, so bystanders' messages are dropped without a
-   * fetch. `null`: the starter message is gone for good (deleted).
+   * fetch. `null` only when Discord said the starter message was deleted.
    */
   const askers = new Map<string, string | null>();
   const ASKER_CACHE_SIZE = 1000;
@@ -428,23 +427,39 @@ export function registerHandlers(client: Client, deps: HandlerDeps): void {
       starter = await thread.fetchStarterMessage();
     } catch (err) {
       // 10008 Unknown Message: the header was deleted, which won't change.
-      if ((err as { code?: unknown }).code === 10008) starter = null;
-      else {
-        logger.warn({ err, threadId: thread.id }, 'Could not fetch the answer thread starter');
+      if ((err as { code?: unknown }).code === 10008) {
+        logger.info({ threadId: thread.id }, 'Answer thread starter was deleted; asker unknown');
+        remember(thread.id, null);
         return {};
       }
+      logger.warn({ err, threadId: thread.id }, 'Could not fetch the answer thread starter');
+      return {};
     }
     if (!starter) {
-      if (askers.get(thread.id) !== null) {
-        logger.info({ threadId: thread.id }, 'Answer thread starter is gone; asker unknown');
-      }
-      remember(thread.id, null);
+      // null from Discord itself can be temporary (parent channel not cached): don't remember it.
+      logger.warn({ threadId: thread.id }, 'Answer thread starter unavailable; asker unknown');
       return {};
     }
     const askerId =
       starter.author.id === client.user?.id ? parseAsker(starter.content) : starter.author.id;
-    remember(thread.id, askerId ?? null);
+    if (askerId) remember(thread.id, askerId);
     return { starter, askerId };
+  }
+
+  /** /ask must answer within 3 seconds: the cached asker, else a fetch with a time limit. */
+  const ASKER_LOOKUP_MS = 2_000;
+  async function askerWithin(thread: ThreadChannel, ms: number): Promise<string | undefined> {
+    const cached = askers.get(thread.id);
+    if (cached !== undefined) return cached ?? undefined;
+    let timer: NodeJS.Timeout | undefined;
+    const timeout = new Promise<undefined>((resolve) => {
+      timer = setTimeout(() => resolve(undefined), ms);
+    });
+    try {
+      return await Promise.race([threadAsker(thread).then((r) => r.askerId), timeout]);
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   async function handleThreadMessage(message: Message<true>, thread: ThreadChannel): Promise<void> {

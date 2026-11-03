@@ -54,6 +54,11 @@ describe('neutralizeLinks', () => {
     expect(n('https://a.example:https://evil.example')).not.toMatch(/https?:\/\//);
   });
 
+  it('treats malformed scheme targets as masked links', () => {
+    expect(n('[official rules](https:/evil.example)')).toBe('official rules');
+    expect(n('[official rules](https:\\\\evil.example)')).toBe('official rules');
+  });
+
   it('leaves code that only looks like a masked link alone', () => {
     const code = '`ItemDefs[i](y)` and `auto f = [](int) { return 1; };`';
     expect(n(code)).toBe(code);

@@ -89,7 +89,7 @@ export class Oracle {
    */
   async screen(turns: ChatTurn[], signal?: AbortSignal): Promise<TopicResult> {
     if (!this.config.llm.topicCheck) {
-      return { verdict: 'atlantis', allowed: true, ms: 0 };
+      return { verdict: 'atlantis', allowed: true };
     }
     const result = await checkTopic({
       llm: this.llm,
