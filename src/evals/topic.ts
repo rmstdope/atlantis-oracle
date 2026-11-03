@@ -64,7 +64,7 @@ async function main(): Promise<void> {
     const mark = c.expect === 'either' ? '·' : ok ? '✅' : '❌';
     console.log(
       `${mark} ${c.id.padEnd(32)} expected ${c.expect.padEnd(8)} got ${r.verdict}` +
-        ` (${r.ms} ms)${r.error ? ` ERROR ${r.error}` : ''}`,
+        ` (${r.ms} ms)${r.call?.truncated ? ' TRUNCATED' : ''}${r.call?.error ? ` ERROR ${r.call.error}` : ''}`,
     );
   }
   const scored = cases.filter((c) => c.expect !== 'either').length;

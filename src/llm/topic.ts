@@ -1,6 +1,6 @@
 import type { ChatCompletionCreateParamsNonStreaming } from 'openai/resources/chat/completions';
 import type { ChatTurn } from '../oracle.js';
-import { stripThinking } from './agent.js';
+import { stripThinking, type LlmCallRecord } from './agent.js';
 import type { LlmClient } from './client.js';
 
 /**
@@ -30,11 +30,8 @@ export interface TopicResult {
   verdict: TopicVerdict;
   allowed: boolean;
   ms: number;
-  /** Token usage as reported by the server (0 when it doesn't, or the check is off). */
-  promptTokens: number;
-  completionTokens: number;
-  /** Set when the call failed; the question is answered anyway. */
-  error?: string;
+  /** The LLM call, as the agent records its own; absent when the check is off. */
+  call?: LlmCallRecord;
 }
 
 export interface TopicCheckOptions {
@@ -96,28 +93,32 @@ export async function checkTopic(opts: TopicCheckOptions): Promise<TopicResult> 
       ? { chat_template_kwargs: { enable_thinking: false } }
       : {}),
   } as ChatCompletionCreateParamsNonStreaming;
+  const thinking = !opts.thinking || opts.thinking === 'on';
+  const record = (extra: Partial<LlmCallRecord>): LlmCallRecord => ({
+    purpose: 'topic',
+    thinking,
+    ms: Date.now() - started,
+    promptTokens: 0,
+    cachedTokens: 0,
+    completionTokens: 0,
+    ...extra,
+  });
   try {
     const res = await opts.llm.complete(params, opts.signal);
     const choice = res.choices?.[0];
+    const truncated = choice?.finish_reason === 'length';
     // A reply cut off by max_tokens may be half-finished reasoning: never a verdict.
-    const verdict =
-      choice?.finish_reason === 'length' ? 'unclear' : parseVerdict(choice?.message?.content ?? '');
-    return {
-      verdict,
-      allowed: verdict !== 'other',
-      ms: Date.now() - started,
+    const verdict = truncated ? 'unclear' : parseVerdict(choice?.message?.content ?? '');
+    const call = record({
       promptTokens: res.usage?.prompt_tokens ?? 0,
+      cachedTokens: res.usage?.prompt_tokens_details?.cached_tokens ?? 0,
       completionTokens: res.usage?.completion_tokens ?? 0,
-    };
+      ...(truncated ? { truncated } : {}),
+    });
+    return { verdict, allowed: verdict !== 'other', ms: call.ms, call };
   } catch (err) {
     if (opts.signal?.aborted) throw err;
-    return {
-      verdict: 'failed',
-      allowed: true,
-      ms: Date.now() - started,
-      promptTokens: 0,
-      completionTokens: 0,
-      error: err instanceof Error ? err.message : String(err),
-    };
+    const call = record({ error: err instanceof Error ? err.message : String(err) });
+    return { verdict: 'failed', allowed: true, ms: call.ms, call };
   }
 }

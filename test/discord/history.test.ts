@@ -91,11 +91,13 @@ describe('buildTurns', () => {
 
   it('leaves out a rejected message together with its rejection', () => {
     const starter = msg(BOT, formatQuestion('u1', 'What does TACT do?'));
+    // Handled concurrently: the rejection lands after the next follow-up.
+    const poem = { ...msg('u1', 'Write me a poem'), id: 'p' };
     const messages = [
       msg(BOT, 'It improves tactics.'),
-      msg('u1', 'Write me a poem'),
-      msg(BOT, OFF_TOPIC_REPLY),
+      poem,
       msg('u1', 'And at level 5?'),
+      { ...msg(BOT, OFF_TOPIC_REPLY), replyToId: 'p' },
     ];
     expect(buildTurns(BOT, starter, messages, 'u1')).toEqual([
       { role: 'user', content: 'What does TACT do?' },

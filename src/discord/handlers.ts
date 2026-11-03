@@ -179,17 +179,6 @@ export function registerHandlers(client: Client, deps: HandlerDeps): void {
       });
       return;
     }
-    // An answer thread belongs to its asker: others' questions would join that conversation.
-    if (channel.isThread() && isAnswerThread(channel)) {
-      const { askerId } = await threadAsker(channel);
-      if (askerId !== interaction.user.id) {
-        await interaction.reply({
-          content: 'This thread serves another drone. Use /ask in the channel to start your own.',
-          flags: MessageFlags.Ephemeral,
-        });
-        return;
-      }
-    }
     const limit = rateLimiter.check(interaction.user.id);
     if (!limit.allowed) {
       await interaction.reply({
@@ -203,16 +192,33 @@ export function registerHandlers(client: Client, deps: HandlerDeps): void {
       interaction.options.getString('variant') ??
         (channel.isThread() ? variantFromThreadName(channel.name) : undefined),
     );
+    // Checks that need Discord or the LLM come after the defer (3-second deadline).
+    // A refusal replaces the deferred public reply with a private one.
     await interaction.deferReply();
-    const turns: ChatTurn[] = [{ role: 'user', content: question }];
-    // Off-topic questions are turned away privately, before anything is posted.
-    if (!(await deps.oracle.screen(turns)).allowed) {
+    const refuse = async (content: string) => {
       await interaction.deleteReply().catch(() => {});
       await interaction.followUp({
-        content: OFF_TOPIC_REPLY,
+        content,
         flags: MessageFlags.Ephemeral,
         allowedMentions: NO_MENTIONS,
       });
+    };
+    // An answer thread belongs to its asker: others' questions would join that conversation.
+    if (channel.isThread() && isAnswerThread(channel)) {
+      const { askerId } = await threadAsker(channel);
+      if (askerId !== interaction.user.id) {
+        await refuse(
+          askerId
+            ? 'This thread serves another drone. Use /ask in the channel to start your own.'
+            : 'The origin of this thread cannot be verified. Use /ask in the channel.',
+        );
+        return;
+      }
+    }
+    const turns: ChatTurn[] = [{ role: 'user', content: question }];
+    // Off-topic questions are turned away privately, before anything is posted.
+    if (!(await deps.oracle.screen(turns)).allowed) {
+      await refuse(OFF_TOPIC_REPLY);
       return;
     }
     const header = await interaction.editReply({
@@ -398,6 +404,18 @@ export function registerHandlers(client: Client, deps: HandlerDeps): void {
     thread.ownerId === client.user?.id && !isAnomalyThreadName(thread.name);
 
   /**
+   * Asker per answer thread, so bystanders' messages are dropped without a
+   * fetch. `null`: the starter message is gone for good (deleted).
+   */
+  const askers = new Map<string, string | null>();
+  const ASKER_CACHE_SIZE = 1000;
+  const remember = (threadId: string, askerId: string | null) => {
+    askers.delete(threadId);
+    askers.set(threadId, askerId);
+    if (askers.size > ASKER_CACHE_SIZE) askers.delete(askers.keys().next().value!);
+  };
+
+  /**
    * The starter message of an answer thread and who asked: the first mention
    * in the bot's question header. Unknown when the starter is gone or can't
    * be fetched; callers then refuse rather than guess.
@@ -409,18 +427,23 @@ export function registerHandlers(client: Client, deps: HandlerDeps): void {
     try {
       starter = await thread.fetchStarterMessage();
     } catch (err) {
-      logger.warn(
-        { err, threadId: thread.id },
-        'Could not fetch the answer thread starter message',
-      );
-      return {};
+      // 10008 Unknown Message: the header was deleted, which won't change.
+      if ((err as { code?: unknown }).code === 10008) starter = null;
+      else {
+        logger.warn({ err, threadId: thread.id }, 'Could not fetch the answer thread starter');
+        return {};
+      }
     }
     if (!starter) {
-      logger.warn({ threadId: thread.id }, 'Answer thread has no starter message; asker unknown');
+      if (askers.get(thread.id) !== null) {
+        logger.info({ threadId: thread.id }, 'Answer thread starter is gone; asker unknown');
+      }
+      remember(thread.id, null);
       return {};
     }
     const askerId =
       starter.author.id === client.user?.id ? parseAsker(starter.content) : starter.author.id;
+    remember(thread.id, askerId ?? null);
     return { starter, askerId };
   }
 
@@ -428,6 +451,8 @@ export function registerHandlers(client: Client, deps: HandlerDeps): void {
     const botId = client.user!.id;
     // Only the player who asked can continue; others may talk in the thread
     // without the bot answering or reading along.
+    const cached = askers.get(thread.id);
+    if (cached === null || (cached !== undefined && message.author.id !== cached)) return;
     const { starter, askerId } = await threadAsker(thread);
     if (!starter || !askerId || message.author.id !== askerId) return;
 
@@ -438,6 +463,8 @@ export function registerHandlers(client: Client, deps: HandlerDeps): void {
     }
 
     const toHistory = (m: Message): HistoryMessage => ({
+      id: m.id,
+      replyToId: m.reference?.messageId,
       authorId: m.author.id,
       content: m.content,
       createdTimestamp: m.createdTimestamp,

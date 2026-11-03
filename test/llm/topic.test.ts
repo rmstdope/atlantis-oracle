@@ -52,12 +52,17 @@ describe('checkTopic', () => {
     expect(await checkTopic({ llm, model: 'm', turns: ask('x') })).toMatchObject({
       verdict: 'unclear',
       allowed: true,
+      call: { truncated: true },
     });
   });
 
   it('lets the question through when the call fails', async () => {
     const result = await checkTopic({ llm: fakeLlm([fail('boom')]), model: 'm', turns: ask('x') });
-    expect(result).toMatchObject({ verdict: 'failed', allowed: true, error: 'boom' });
+    expect(result).toMatchObject({
+      verdict: 'failed',
+      allowed: true,
+      call: { purpose: 'topic', error: 'boom' },
+    });
   });
 
   it('rethrows when aborted', async () => {

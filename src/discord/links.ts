@@ -48,23 +48,29 @@ export function githubRepoLinks(repoUrl: string): LinkFilter {
   };
 }
 
-// Masked links, then <angle> links, then any scheme://… URL.
+// Masked links (Discord only renders them with a scheme://… target, so code
+// like `ItemDefs[i](y)` or a C++ lambda `[](int)` is not one), then <angle>
+// links, then any scheme://… URL.
 const TOKENS =
-  /\[([^\]\n]*)\]\(\s*<?([^()\s<>]*)>?\s*\)|<([a-z][a-z0-9+.-]*:\/\/[^\s<>]+)>|([a-z][a-z0-9+.-]*:\/\/[^\s<>`]+)/gi;
+  /\[([^\]\n]*)\]\(\s*<?([a-z][a-z0-9+.-]*:\/\/[^()\s<>]*)>?\s*\)|<([a-z][a-z0-9+.-]*:\/\/[^\s<>]+)>|([a-z][a-z0-9+.-]*:\/\/[^\s<>`]+)/gi;
 
 /** Linkifiers leave trailing punctuation out of a bare URL; so do we. */
 function splitTrailing(url: string): [string, string] {
-  const m = /[.,;:!?'")\]*_~`]+$/.exec(url);
+  const m = /[.,;:!?'")\]*_~]+$/.exec(url);
   return m ? [url.slice(0, m.index), m[0]] : [url, ''];
 }
 
-/** Every `://` (a redirect can nest a second URL) and the host's dots. */
+/**
+ * Breaks every `://` in the URL, not just the first: a second URL can hide in
+ * a redirect (`?to=https://…`) or even in the host part (`https://x@https://…`).
+ * The host's dots are bracketed too, the usual defanged form.
+ */
 function defang(url: string): string {
   const i = url.indexOf('://');
-  const rest = url.slice(i + 3);
-  const host = /^[^/?#]*/.exec(rest)![0];
   const scheme = url.slice(0, i).replace(/^http/i, 'hxxp');
-  return `${scheme}[:]//${host.replace(/\./g, '[.]')}${rest.slice(host.length).replaceAll('://', '[:]//')}`;
+  const body = url.slice(i + 3).replaceAll('://', '[:]//');
+  const host = /^[^/?#]*/.exec(body)![0];
+  return `${scheme}[:]//${host.replace(/\./g, '[.]')}${body.slice(host.length)}`;
 }
 
 export function neutralizeLinks(text: string, allowed: LinkFilter): string {

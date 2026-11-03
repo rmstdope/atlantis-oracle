@@ -128,9 +128,9 @@ async function main(): Promise<void> {
     const turns = [{ role: 'user' as const, content: q.question }];
     // The topic check is part of answering: its verdict, time and tokens count.
     const topic = await oracle.screen(turns);
-    const topicCall =
-      `topic (${topic.verdict}) ${Math.round(topic.ms / 1000)}s ` +
-      `${topic.promptTokens}+${topic.completionTokens} tokens${topic.error ? ` ERROR ${topic.error}` : ''}`;
+    const topicCalls = topic.call ? [`${describeLlmCall(topic.call)} → ${topic.verdict}`] : [];
+    const topicPrompt = topic.call?.promptTokens ?? 0;
+    const topicCompletion = topic.call?.completionTokens ?? 0;
     try {
       if (!topic.allowed) throw new Error('rejected by the topic check');
       const r = await oracle.ask({ turns, variant: q.variant });
@@ -147,9 +147,9 @@ async function main(): Promise<void> {
         trace: r.toolCalls.map(
           (c) => `${c.repeat ? '(repeat) ' : c.ok ? '' : '(failed) '}${c.name} ${c.args}`,
         ),
-        llmCalls: [topicCall, ...r.llmCalls.map(describeLlmCall)],
-        promptTokens: topic.promptTokens + r.usage.promptTokens,
-        completionTokens: topic.completionTokens + r.usage.completionTokens,
+        llmCalls: [...topicCalls, ...r.llmCalls.map(describeLlmCall)],
+        promptTokens: topicPrompt + r.usage.promptTokens,
+        completionTokens: topicCompletion + r.usage.completionTokens,
         ...scoreAnswer(q, r.text),
       };
     } catch (err) {
@@ -165,9 +165,9 @@ async function main(): Promise<void> {
         toolCalls: partial?.toolCalls.length ?? 0,
         hitIterationCap: false,
         trace: partial?.toolCalls.map((c) => `${c.name} ${c.args}`) ?? [],
-        llmCalls: [topicCall, ...(partial?.llmCalls.map(describeLlmCall) ?? [])],
-        promptTokens: topic.promptTokens + (partial?.usage.promptTokens ?? 0),
-        completionTokens: topic.completionTokens + (partial?.usage.completionTokens ?? 0),
+        llmCalls: [...topicCalls, ...(partial?.llmCalls.map(describeLlmCall) ?? [])],
+        promptTokens: topicPrompt + (partial?.usage.promptTokens ?? 0),
+        completionTokens: topicCompletion + (partial?.usage.completionTokens ?? 0),
         recall: 0,
         missing: q.mustMention,
         forbidden: [],

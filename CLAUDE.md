@@ -145,16 +145,21 @@ test/                   mirrors src/; helpers/ has the fixture path and a script
 
 1. `discord/handlers.ts` receives `/ask` or a message in a bot-owned thread. It
    checks the channel allowlist and the rate limit. For `/ask` it calls
-   `deferReply()` right away (Discord gives only 3 seconds before the interaction
-   expires), then runs `oracle.screen()` (the topic check, `LLM_TOPIC_CHECK`):
-   a clear OTHER deletes the deferred reply and answers privately. Otherwise it
-   edits the reply into a question header and starts a thread from it.
-   The thread name ends in ` · <variant>`, so follow-ups need no stored state.
+   `deferReply()` before anything that needs Discord or the LLM (Discord gives
+   only 3 seconds before the interaction expires). Then, inside an answer
+   thread, only that thread's asker may use `/ask`, and `oracle.screen()` (the
+   topic check, `LLM_TOPIC_CHECK`) runs. A refusal deletes the deferred reply and
+   answers privately. Otherwise it edits the reply into a question header and
+   starts a thread from it. The thread name ends in ` · <variant>`, so
+   follow-ups need no stored state.
 2. Follow-ups are accepted only from the asker, whose ID is the first mention
-   in the thread's starter message (`format.parseAsker`); other messages are
-   ignored, and left out of the history. `discord/history.ts` rebuilds the turns
-   from the thread's starter message and its last 20 messages, and the topic
-   check sees the new message with up to 4 earlier turns as context. `oracle.ts` adds the system prompt
+   in the thread's starter message (`format.parseAsker`, cached per thread);
+   other messages are ignored, and left out of the history.
+   `discord/history.ts` rebuilds the turns from the starter message and up to
+   100 thread messages: it drops other players' messages and every rejected
+   message with its off-topic reply (matched by reply reference), then keeps the
+   last 20. The topic check sees the new message with up to 4 earlier turns as
+   context. `oracle.ts` adds the system prompt
    (repo, commit, selected variant, whether rules exist, and a note that expands
    abbreviations found by `llm/glossary.ts`, e.g. `SSTO = skill "summon storm"`) and takes an
    `LLM_MAX_CONCURRENT` slot.

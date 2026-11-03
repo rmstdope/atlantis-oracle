@@ -49,6 +49,16 @@ describe('neutralizeLinks', () => {
     );
   });
 
+  it('defangs a URL hidden in the host part', () => {
+    expect(n('https://x@https://evil.example/a')).not.toMatch(/https?:\/\//);
+    expect(n('https://a.example:https://evil.example')).not.toMatch(/https?:\/\//);
+  });
+
+  it('leaves code that only looks like a masked link alone', () => {
+    const code = '`ItemDefs[i](y)` and `auto f = [](int) { return 1; };`';
+    expect(n(code)).toBe(code);
+  });
+
   it('keeps links into the game repository', () => {
     expect(n(`Source: ${REPO_LINK}`)).toBe(`Source: ${REPO_LINK}`);
     expect(n(`[gamedata.cpp](${REPO_LINK})`)).toBe(`[gamedata.cpp](${REPO_LINK})`);

@@ -59,7 +59,7 @@ async function main(): Promise<void> {
   }
   if (topic.verdict !== 'atlantis') {
     console.error(
-      `[topic check ${topic.verdict}${topic.error ? `: ${topic.error}` : ''}; answering]`,
+      `[topic check ${topic.verdict}${topic.call?.error ? `: ${topic.call.error}` : ''}; answering]`,
     );
   }
   const result = await oracle.ask({

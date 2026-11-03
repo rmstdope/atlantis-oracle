@@ -3,6 +3,9 @@ import { isOffTopicReply, parseQuestion, STATUS_PREFIXES } from './format.js';
 
 /** The parts of a Discord message the history needs; keeps this module testable. */
 export interface HistoryMessage {
+  id?: string;
+  /** The message this one replies to (Discord's message reference). */
+  replyToId?: string;
   authorId: string;
   content: string;
   createdTimestamp: number;
@@ -55,15 +58,17 @@ export function buildTurns(
     const question = starter.authorId === botId ? parseQuestion(starter.content) : starter.content;
     if (question) push('user', question);
   }
-  const kept: HistoryMessage[] = [];
-  for (const m of [...messages].sort((a, b) => a.createdTimestamp - b.createdTimestamp)) {
-    if (m.authorId !== botId && askerId && m.authorId !== askerId) continue;
-    if (m.authorId === botId && isOffTopicReply(m.content)) {
-      if (kept.at(-1) && kept.at(-1)!.authorId !== botId) kept.pop();
-      continue;
-    }
-    kept.push(m);
-  }
+  // A rejection replies to the message it rejected; both leave the history.
+  const offTopic = (m: HistoryMessage) => m.authorId === botId && isOffTopicReply(m.content);
+  const rejected = new Set(messages.filter(offTopic).map((m) => m.replyToId));
+  const kept = [...messages]
+    .sort((a, b) => a.createdTimestamp - b.createdTimestamp)
+    .filter(
+      (m) =>
+        !offTopic(m) &&
+        !(m.id !== undefined && rejected.has(m.id)) &&
+        (m.authorId === botId || !askerId || m.authorId === askerId),
+    );
   for (const m of kept.slice(-HISTORY_LIMIT)) {
     if (m.authorId === botId) push('assistant', cleanBotMessage(m.content));
     else push('user', m.content.trim());

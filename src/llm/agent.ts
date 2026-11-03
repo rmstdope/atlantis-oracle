@@ -19,7 +19,8 @@ export interface ToolCallRecord {
 
 /** One request to the LLM, for diagnosing slow or failing questions. */
 export interface LlmCallRecord {
-  purpose: 'plan' | 'research' | 'answer' | 'review';
+  /** `topic` is the topic check (llm/topic.ts), made before the agent runs. */
+  purpose: 'topic' | 'plan' | 'research' | 'answer' | 'review';
   ms: number;
   promptTokens: number;
   /** Prompt tokens the server reused from its cache; low values on big prompts mean slow calls. */
