@@ -218,6 +218,8 @@ describe('formatQuestion', () => {
 describe('formatInfo', () => {
   const base = {
     commands: ['ask', 'collective-info', 'latest-release'] as const,
+    tracking: true,
+    channelAllowed: true,
     repoUrl: 'https://github.com/Atlantis-PBEM/Atlantis.git',
     branch: 'stable',
     commit: '0123456789abcdef',
@@ -258,6 +260,47 @@ describe('formatInfo', () => {
     expect(text).toContain('synced never');
     expect(text).toContain('none detected');
     expect(text).toContain('(default branch)');
+    expect(text).toContain('replies from our makers are relayed');
     expect(text.length).toBeLessThanOrEqual(2000);
+  });
+
+  it('does not promise relayed replies when tracking is off', () => {
+    const text = formatInfo({ ...base, commands: ['report-bug', 'wish'], tracking: false });
+    expect(text).toContain('It becomes a public GitHub issue.');
+    expect(text).not.toContain('relayed');
+  });
+
+  it('shows "none" instead of an empty code span when nothing is synced', () => {
+    const text = formatInfo({ ...base, commit: '' });
+    expect(text).toContain('- Commit: none, synced');
+    expect(text).not.toContain('``');
+  });
+
+  it('warns when the channel is not on the allowlist', () => {
+    const text = formatInfo({
+      ...base,
+      commands: ['ask', 'collective-info', 'wish', 'latest-release'],
+      channelAllowed: false,
+    });
+    expect(text).toContain("outside the Collective's reach: `/ask`, `/wish` must be used");
+    expect(formatInfo(base)).not.toContain("outside the Collective's reach");
+    expect(
+      formatInfo({
+        ...base,
+        commands: ['collective-info', 'latest-release'],
+        channelAllowed: false,
+      }),
+    ).not.toContain("outside the Collective's reach");
+  });
+
+  it('splits into Discord-sized messages when config values are long', () => {
+    const text = formatInfo({
+      ...base,
+      variants: Array.from({ length: 40 }, (_, i) => `variant-with-a-long-name-${i}`),
+    });
+    expect(text.length).toBeGreaterThan(2000);
+    const chunks = splitMessage(text);
+    expect(chunks.length).toBeGreaterThan(1);
+    for (const c of chunks) expect(c.length).toBeLessThanOrEqual(2000);
   });
 });

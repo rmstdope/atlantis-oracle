@@ -283,8 +283,14 @@ export function registerHandlers(client: Client, deps: HandlerDeps): void {
 
   async function handleInfo(interaction: ChatInputCommandInteraction): Promise<void> {
     const { repo, config } = deps;
+    const channel = interaction.channel;
     const content = formatInfo({
       commands: discord.commands,
+      tracking: deps.anomalies !== undefined,
+      channelAllowed: channelAllowed(
+        interaction.channelId,
+        channel?.isThread() ? channel.parentId : null,
+      ),
       repoUrl: config.repo.url,
       branch: repo.branch,
       commit: repo.commit,
@@ -295,11 +301,11 @@ export function registerHandlers(client: Client, deps: HandlerDeps): void {
       llmHost: new URL(config.llm.baseURL).host,
       queueLength: deps.oracle.queueLength,
     });
-    await interaction.reply({
-      content,
-      flags: MessageFlags.Ephemeral | NO_EMBEDS,
-      allowedMentions: NO_MENTIONS,
-    });
+    // Long repo URLs, variant lists or model ids can push it past one message.
+    const [first, ...rest] = splitMessage(content);
+    const options = { flags: MessageFlags.Ephemeral | NO_EMBEDS, allowedMentions: NO_MENTIONS };
+    await interaction.reply({ ...options, content: first ?? '' });
+    for (const chunk of rest) await interaction.followUp({ ...options, content: chunk });
   }
 
   const ISSUE_TEXT: Record<
