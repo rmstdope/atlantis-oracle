@@ -1,8 +1,9 @@
 import {
+  InteractionContextType,
   SlashCommandBuilder,
   type RESTPostAPIChatInputApplicationCommandsJSONBody,
 } from 'discord.js';
-import type { CommandName } from '../config.js';
+import type { CommandName, DiscordConfig } from '../config.js';
 
 export const ASK: CommandName = 'ask';
 export const INFO: CommandName = 'collective-info';
@@ -14,13 +15,41 @@ export const MAX_QUESTION_LENGTH = 1000;
 /** Longest /report-bug or /wish text. */
 export const MAX_ISSUE_TEXT_LENGTH = 2000;
 
+/** Which commands a user may run: `released` for everyone, `adminOnly` for ADMIN_USER_ID. */
+export function commandsFor(
+  discord: Pick<DiscordConfig, 'commands' | 'adminCommands' | 'adminUserId'>,
+  userId: string,
+): { released: readonly CommandName[]; adminOnly: readonly CommandName[] } {
+  return {
+    released: discord.commands,
+    adminOnly:
+      discord.adminUserId !== undefined && userId === discord.adminUserId
+        ? discord.adminCommands
+        : [],
+  };
+}
+
+/** Whether `userId` may run `name`. */
+export function mayUse(
+  discord: Pick<DiscordConfig, 'commands' | 'adminCommands' | 'adminUserId'>,
+  userId: string,
+  name: string,
+): boolean {
+  const { released, adminOnly } = commandsFor(discord, userId);
+  return [...released, ...adminOnly].includes(name as CommandName);
+}
+
 /**
- * Definitions of the `enabled` slash commands (ENABLED_COMMANDS). Variant
- * choices come from the synced game repo.
+ * Definitions of the `enabled` slash commands (ENABLED_COMMANDS) and the
+ * `adminOnly` ones (ADMIN_USER_ID). Admin-only commands require the
+ * Administrator permission by default, so ordinary members don't see them;
+ * the handler still answers them for the admin user only. Variant choices
+ * come from the synced game repo.
  */
 export function buildCommands(
   variants: string[],
   enabled: readonly CommandName[],
+  adminOnly: readonly CommandName[] = [],
 ): RESTPostAPIChatInputApplicationCommandsJSONBody[] {
   const ask = new SlashCommandBuilder()
     .setName(ASK)
@@ -79,7 +108,13 @@ export function buildCommands(
       'Show the latest release of the HUD, with links and release notes (only visible to you)',
     );
 
-  return [ask, info, reportBug, wish, anomalies, latestRelease]
-    .filter((c) => enabled.includes(c.name as CommandName))
-    .map((c) => c.toJSON());
+  return [ask, info, reportBug, wish, anomalies, latestRelease].flatMap((c) => {
+    const name = c.name as CommandName;
+    if (enabled.includes(name)) return [c.toJSON()];
+    if (adminOnly.includes(name)) {
+      // Server channels only: default_member_permissions does not hide commands in DMs.
+      return [c.setDefaultMemberPermissions(0).setContexts(InteractionContextType.Guild).toJSON()];
+    }
+    return [];
+  });
 }

@@ -320,3 +320,25 @@ describe('formatInfo', () => {
     for (const c of chunks) expect(c.length).toBeLessThanOrEqual(2000);
   });
 });
+
+describe('formatInfo for the admin', () => {
+  it('marks unreleased commands', () => {
+    const text = formatInfo({
+      commands: ['collective-info'],
+      adminOnly: ['ask'],
+      tracking: false,
+      channelAllowed: true,
+      hudSiteUrl: 'https://hud.example.com',
+      repoUrl: 'https://github.com/o/r.git',
+      branch: 'stable',
+      commit: '0123456789abcdef',
+      syncedAt: undefined,
+      variants: ['standard'],
+      defaultVariant: 'standard',
+      queueLength: 0,
+    });
+    expect(text).toMatch(/`\/ask question:<text>.*\*\(admin only, not released\)\*/);
+    expect(text).toContain('assimilated the rules');
+    expect(text).not.toMatch(/`\/collective-info`.*admin only/);
+  });
+});

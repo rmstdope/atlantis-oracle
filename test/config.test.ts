@@ -80,6 +80,23 @@ describe('loadConfig', () => {
     ).toThrow(/GITHUB_POLL_INTERVAL_MINUTES/);
   });
 
+  it('gives ADMIN_USER_ID the available commands that ENABLED_COMMANDS leaves out', () => {
+    const c = loadConfig({
+      ...minimal,
+      GITHUB_TOKEN: 't',
+      GITHUB_POLL_INTERVAL_MINUTES: '0',
+      ENABLED_COMMANDS: 'ask,collective-info',
+      ADMIN_USER_ID: ' 123456789012345678 ',
+    });
+    expect(c.discord.adminUserId).toBe('123456789012345678');
+    // anomalies needs tracking, so not even the admin gets it.
+    expect(c.discord.adminCommands).toEqual(['report-bug', 'wish', 'latest-release']);
+    expect(loadConfig({ ...minimal, ENABLED_COMMANDS: 'ask' }).discord.adminCommands).toEqual([]);
+    expect(loadConfig({ ...minimal, ADMIN_USER_ID: '' }).discord.adminUserId).toBeUndefined();
+    expect(() => loadConfig({ ...minimal, ADMIN_USER_ID: '@henrik' })).toThrow(ConfigError);
+    expect(() => loadConfig({ ...minimal, ADMIN_USER_ID: '1234' })).toThrow(ConfigError);
+  });
+
   it('enables GitHub bug reports only with a token', () => {
     expect(loadConfig({ ...minimal, GITHUB_ISSUES_REPO: 'o/r' }).github).toBeUndefined();
     expect(loadConfig({ ...minimal, GITHUB_TOKEN: 't' }).github?.repo).toBe(
