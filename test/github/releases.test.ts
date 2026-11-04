@@ -6,19 +6,29 @@ import type { Release } from '../../src/github/client.js';
 import { ReleaseWatcher } from '../../src/github/releases.js';
 import { silentLogger } from '../helpers/fixture.js';
 
-const release = (tag: string, publishedAt: string | null): Release => ({
+const release = (tag: string, publishedAt: string | null, notes = ''): Release => ({
   tag,
   name: tag,
   url: `https://github.com/o/r/releases/tag/${tag}`,
   publishedAt,
-  notes: '',
+  notes,
 });
+
+/** A fake announcer whose posts get IDs msg-1, msg-2, … */
+const announcer = () => {
+  let n = 0;
+  return {
+    post: vi.fn(async (_release: Release): Promise<string | undefined> => `msg-${++n}`),
+    revise: vi.fn(async (_messageId: string, _release: Release) => true),
+  };
+};
 
 let dir: string;
 let file: string;
 let now: number;
 const source = { latestRelease: vi.fn<() => Promise<Release | null>>() };
 const watcher = () => new ReleaseWatcher(source, file, silentLogger, () => now);
+const state = async () => JSON.parse(await readFile(file, 'utf8'));
 
 beforeEach(async () => {
   dir = await mkdtemp(path.join(tmpdir(), 'oracle-releases-'));
@@ -32,48 +42,123 @@ afterEach(async () => {
 
 describe('ReleaseWatcher.check', () => {
   it('announces the current release on the very first check', async () => {
-    source.latestRelease.mockResolvedValue(release('v1', '2026-10-01T00:00:00Z'));
-    const announce = vi.fn(async () => {});
-    await watcher().check(announce);
-    expect(announce).toHaveBeenCalledWith(expect.objectContaining({ tag: 'v1' }));
-    expect(JSON.parse(await readFile(file, 'utf8'))).toEqual({
+    source.latestRelease.mockResolvedValue(release('v1', '2026-10-01T00:00:00Z', 'notes'));
+    const a = announcer();
+    await watcher().check(a);
+    expect(a.post).toHaveBeenCalledWith(expect.objectContaining({ tag: 'v1' }));
+    expect(await state()).toEqual({
       tag: 'v1',
       publishedAt: '2026-10-01T00:00:00Z',
+      messageId: 'msg-1',
+      name: 'v1',
+      notes: 'notes',
     });
   });
 
   it('announces a newer release once, also across restarts', async () => {
     source.latestRelease.mockResolvedValue(release('v1', '2026-10-01T00:00:00Z'));
-    await watcher().check(vi.fn());
+    await watcher().check(announcer());
     source.latestRelease.mockResolvedValue(release('v2', '2026-11-01T00:00:00Z'));
-    const announce = vi.fn(async () => {});
-    await watcher().check(announce);
-    await watcher().check(announce);
-    expect(announce).toHaveBeenCalledTimes(1);
-    expect(announce).toHaveBeenCalledWith(expect.objectContaining({ tag: 'v2' }));
+    const a = announcer();
+    await watcher().check(a);
+    await watcher().check(a);
+    expect(a.post).toHaveBeenCalledTimes(1);
+    expect(a.post).toHaveBeenCalledWith(expect.objectContaining({ tag: 'v2' }));
+    expect(a.revise).not.toHaveBeenCalled();
+  });
+
+  it('revises the announcement when the notes are written after publishing', async () => {
+    source.latestRelease.mockResolvedValue(release('v1', '2026-10-01T00:00:00Z', '## Installing'));
+    const a = announcer();
+    await watcher().check(a);
+    source.latestRelease.mockResolvedValue(
+      release('v1', '2026-10-01T00:00:00Z', "What's new for you"),
+    );
+    await watcher().check(a);
+    await watcher().check(a);
+    expect(a.post).toHaveBeenCalledTimes(1);
+    expect(a.revise).toHaveBeenCalledTimes(1);
+    expect(a.revise).toHaveBeenCalledWith(
+      'msg-1',
+      expect.objectContaining({ notes: "What's new for you" }),
+    );
+    expect(await state()).toMatchObject({ messageId: 'msg-1', notes: "What's new for you" });
+  });
+
+  it('retries a revision that failed', async () => {
+    await writeFileSafe({ tag: 'v1', publishedAt: null, messageId: 'm', name: 'v1', notes: 'a' });
+    source.latestRelease.mockResolvedValue(release('v1', null, 'b'));
+    const a = announcer();
+    a.revise.mockRejectedValueOnce(new Error('discord down'));
+    await expect(watcher().check(a)).rejects.toThrow('discord down');
+    await watcher().check(a);
+    expect(a.revise).toHaveBeenCalledTimes(2);
+    expect((await state()).notes).toBe('b');
+  });
+
+  it('stops revising an announcement that can no longer be edited', async () => {
+    await writeFileSafe({ tag: 'v1', publishedAt: null, messageId: 'm', name: 'v1', notes: 'a' });
+    source.latestRelease.mockResolvedValue(release('v1', null, 'b'));
+    const a = announcer();
+    a.revise.mockResolvedValueOnce(false);
+    await watcher().check(a);
+    expect((await state()).messageId).toBeUndefined();
+    source.latestRelease.mockResolvedValue(release('v1', null, 'c'));
+    await watcher().check(a);
+    expect(a.revise).toHaveBeenCalledTimes(1);
+    expect((await state()).notes).toBe('c');
+  });
+
+  it('revises the announcement when the release date changes', async () => {
+    await writeFileSafe({
+      tag: 'v1',
+      publishedAt: '2026-10-01T00:00:00Z',
+      messageId: 'm',
+      name: 'v1',
+      notes: 'a',
+    });
+    source.latestRelease.mockResolvedValue(release('v1', '2026-10-02T00:00:00Z', 'a'));
+    const a = announcer();
+    await watcher().check(a);
+    expect(a.revise).toHaveBeenCalledWith(
+      'm',
+      expect.objectContaining({ publishedAt: '2026-10-02T00:00:00Z' }),
+    );
+  });
+
+  it('records the notes silently for state from older versions', async () => {
+    await writeFileSafe({ tag: 'v1', publishedAt: '2026-10-01T00:00:00Z' });
+    source.latestRelease.mockResolvedValue(release('v1', '2026-10-01T00:00:00Z', 'notes'));
+    const a = announcer();
+    await watcher().check(a);
+    expect(a.post).not.toHaveBeenCalled();
+    expect(a.revise).not.toHaveBeenCalled();
+    expect(await state()).toMatchObject({ tag: 'v1', notes: 'notes' });
   });
 
   it('retries an announcement that failed', async () => {
     await writeFileSafe({ tag: 'v1', publishedAt: '2026-10-01T00:00:00Z' });
     source.latestRelease.mockResolvedValue(release('v2', '2026-11-01T00:00:00Z'));
-    const announce = vi.fn().mockRejectedValueOnce(new Error('discord down'));
-    await expect(watcher().check(announce)).rejects.toThrow('discord down');
-    await watcher().check(announce);
-    expect(announce).toHaveBeenCalledTimes(2);
+    const a = announcer();
+    a.post.mockRejectedValueOnce(new Error('discord down'));
+    await expect(watcher().check(a)).rejects.toThrow('discord down');
+    await watcher().check(a);
+    expect(a.post).toHaveBeenCalledTimes(2);
   });
 
   it('silently accepts an older release after the newest was deleted', async () => {
-    await writeFileSafe({ tag: 'v2', publishedAt: '2026-11-01T00:00:00Z' });
+    await writeFileSafe({ tag: 'v2', publishedAt: '2026-11-01T00:00:00Z', messageId: 'm2' });
     source.latestRelease.mockResolvedValue(release('v1', '2026-10-01T00:00:00Z'));
-    const announce = vi.fn();
-    await watcher().check(announce);
-    expect(announce).not.toHaveBeenCalled();
-    expect(JSON.parse(await readFile(file, 'utf8')).tag).toBe('v1');
+    const a = announcer();
+    await watcher().check(a);
+    expect(a.post).not.toHaveBeenCalled();
+    expect(await state()).toMatchObject({ tag: 'v1' });
+    expect((await state()).messageId).toBeUndefined();
   });
 
   it('does nothing while there are no releases', async () => {
     source.latestRelease.mockResolvedValue(null);
-    await watcher().check(vi.fn());
+    await watcher().check(announcer());
     await expect(readFile(file, 'utf8')).rejects.toThrow();
   });
 });
@@ -91,7 +176,7 @@ describe('ReleaseWatcher.latest', () => {
     expect(source.latestRelease).toHaveBeenCalledTimes(2);
 
     source.latestRelease.mockResolvedValue(release('v2', null));
-    await w.check(vi.fn());
+    await w.check(announcer());
     expect(await w.latest()).toMatchObject({ tag: 'v2' });
     expect(source.latestRelease).toHaveBeenCalledTimes(3);
   });
