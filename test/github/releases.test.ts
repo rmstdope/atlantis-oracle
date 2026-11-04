@@ -19,7 +19,7 @@ const announcer = () => {
   let n = 0;
   return {
     post: vi.fn(async (_release: Release): Promise<string | undefined> => `msg-${++n}`),
-    revise: vi.fn(async (_messageId: string, _release: Release) => {}),
+    revise: vi.fn(async (_messageId: string, _release: Release) => true),
   };
 };
 
@@ -94,6 +94,36 @@ describe('ReleaseWatcher.check', () => {
     await watcher().check(a);
     expect(a.revise).toHaveBeenCalledTimes(2);
     expect((await state()).notes).toBe('b');
+  });
+
+  it('stops revising an announcement that can no longer be edited', async () => {
+    await writeFileSafe({ tag: 'v1', publishedAt: null, messageId: 'm', name: 'v1', notes: 'a' });
+    source.latestRelease.mockResolvedValue(release('v1', null, 'b'));
+    const a = announcer();
+    a.revise.mockResolvedValueOnce(false);
+    await watcher().check(a);
+    expect((await state()).messageId).toBeUndefined();
+    source.latestRelease.mockResolvedValue(release('v1', null, 'c'));
+    await watcher().check(a);
+    expect(a.revise).toHaveBeenCalledTimes(1);
+    expect((await state()).notes).toBe('c');
+  });
+
+  it('revises the announcement when the release date changes', async () => {
+    await writeFileSafe({
+      tag: 'v1',
+      publishedAt: '2026-10-01T00:00:00Z',
+      messageId: 'm',
+      name: 'v1',
+      notes: 'a',
+    });
+    source.latestRelease.mockResolvedValue(release('v1', '2026-10-02T00:00:00Z', 'a'));
+    const a = announcer();
+    await watcher().check(a);
+    expect(a.revise).toHaveBeenCalledWith(
+      'm',
+      expect.objectContaining({ publishedAt: '2026-10-02T00:00:00Z' }),
+    );
   });
 
   it('records the notes silently for state from older versions', async () => {

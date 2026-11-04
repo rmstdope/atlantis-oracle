@@ -27,14 +27,20 @@ type ReleaseState = z.infer<typeof stateSchema>;
 export interface Announcer {
   /** Posts a new release; returns the message ID, or undefined if it can't be revised. */
   post(release: Release): Promise<string | undefined>;
-  /** Rewrites a posted announcement after the release's name or notes changed. */
-  revise(messageId: string, release: Release): Promise<void>;
+  /**
+   * Rewrites a posted announcement after the release changed. Returns false
+   * when the message can never be edited (deleted, or no access), so the
+   * watcher stops trying.
+   */
+  revise(messageId: string, release: Release): Promise<boolean>;
 }
 
 /**
  * Knows the latest release: serves /latest-release from a short cache and,
  * when started, announces each new release once. The last announced release
- * is kept in a file, so restarts don't announce it again.
+ * is kept in a file, so restarts don't announce it again. Release notes are
+ * often written after the release is published, so the announcement is
+ * revised whenever the release's name, notes or date change.
  */
 export class ReleaseWatcher {
   private cache: { at: number; release: Release | null } | undefined;
@@ -80,13 +86,27 @@ export class ReleaseWatcher {
         notes: release.notes,
       };
       if (known?.tag === release.tag) {
-        if (known.name === release.name && known.notes === release.notes) return;
-        // State from before revisions were tracked has no name/notes: just record them.
-        if (known.messageId && known.notes !== undefined) {
-          await announcer.revise(known.messageId, release);
-          this.logger.info({ tag: release.tag }, 'Revised release announcement');
+        if (
+          known.name === release.name &&
+          known.notes === release.notes &&
+          known.publishedAt === release.publishedAt
+        ) {
+          return;
         }
-        await this.writeState({ ...state, messageId: known.messageId });
+        let messageId = known.messageId;
+        // State from before revisions were tracked has no name/notes: just record them.
+        if (messageId && known.notes !== undefined) {
+          if (await announcer.revise(messageId, release)) {
+            this.logger.info({ tag: release.tag }, 'Revised release announcement');
+          } else {
+            this.logger.warn(
+              { tag: release.tag, messageId },
+              'Release announcement can no longer be edited; not revising it again',
+            );
+            messageId = undefined;
+          }
+        }
+        await this.writeState({ ...state, messageId });
         return;
       }
       let messageId: string | undefined;

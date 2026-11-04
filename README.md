@@ -287,7 +287,7 @@ All configuration is done with environment variables, read from `.env` in develo
 | `GITHUB_TOKEN` | no | | GitHub token that files `/report-bug` and `/wish` issues: a fine-grained token with *Issues: Read and write* on `GITHUB_ISSUES_REPO`. Issues are created under this token's account. Required for `/report-bug`, `/wish` and `/anomalies`. |
 | `GITHUB_ISSUES_REPO` | no | `rmstdope/atlantis-hud` | The HUD repository (`owner/name`): receives bug reports and wishes, and `/latest-release` shows its releases |
 | `HUD_SITE_URL` | no | `https://atlantis-hud.rmstdope.eu` | The HUD's website, linked from `/latest-release` |
-| `RELEASE_ANNOUNCE_CHANNEL_ID` | no | | Channel where new HUD releases are announced, with the same message as `/latest-release`. If unset, nothing is announced. The first run announces the current release; after that, each new release is announced once. When the release notes are edited later, the announcement is updated to match (the bot needs Read Message History in the channel). |
+| `RELEASE_ANNOUNCE_CHANNEL_ID` | no | | Channel where new HUD releases are announced, with the same message as `/latest-release`. If unset, nothing is announced. The first run announces the current release; after that, each new release is announced once. When the release notes are edited later, the announcement is updated to match. |
 | `RELEASE_POLL_INTERVAL_MINUTES` | no | `15` | How often to look for a new release. `0` turns announcements off. |
 | `RELEASE_STATE_PATH` | no | `./data/latest-release.json` | Remembers the last announced release across restarts |
 | `GITHUB_BUG_LABELS` | no | | Comma-separated labels for `/report-bug` issues, e.g. `bug` |
