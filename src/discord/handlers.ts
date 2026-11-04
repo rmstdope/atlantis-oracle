@@ -66,6 +66,11 @@ export interface HandlerDeps {
 export function registerHandlers(client: Client, deps: HandlerDeps): void {
   const { discord, logger } = deps;
   const rateLimiter = new RateLimiter(discord.rateLimitPerUserPerMinute);
+  /** Commands this user may use: the enabled ones, plus admin-only ones for the admin. */
+  const commandsFor = (userId: string): CommandName[] =>
+    userId === discord.adminUserId
+      ? [...discord.commands, ...discord.adminCommands]
+      : discord.commands;
   const issueLimiter = new RateLimiter(deps.config.github?.reportsPerUserPerHour ?? 1, 3_600_000);
 
   const channelAllowed = (channelId: string | null, parentId?: string | null) =>
@@ -285,7 +290,7 @@ export function registerHandlers(client: Client, deps: HandlerDeps): void {
     const { repo, config } = deps;
     const channel = interaction.channel;
     const content = formatInfo({
-      commands: discord.commands,
+      commands: commandsFor(interaction.user.id),
       tracking: deps.anomalies !== undefined,
       channelAllowed: channelAllowed(
         interaction.channelId,
@@ -565,7 +570,7 @@ export function registerHandlers(client: Client, deps: HandlerDeps): void {
   client.on(Events.InteractionCreate, async (interaction) => {
     if (!interaction.isChatInputCommand()) return;
     // Commands still registered from an earlier configuration.
-    if (!discord.commands.includes(interaction.commandName as CommandName)) {
+    if (!commandsFor(interaction.user.id).includes(interaction.commandName as CommandName)) {
       await interaction
         .reply({ content: 'This function has been deactivated.', flags: MessageFlags.Ephemeral })
         .catch(() => {});
@@ -591,7 +596,7 @@ export function registerHandlers(client: Client, deps: HandlerDeps): void {
 
   client.on(Events.MessageCreate, async (message) => {
     // Only follow-ups in threads the bot started; @mentions come later.
-    if (!discord.commands.includes('ask')) return;
+    if (!commandsFor(message.author.id).includes('ask')) return;
     if (message.author.bot || !message.inGuild() || !message.channel.isThread()) return;
     const thread = message.channel;
     if (!isAnswerThread(thread)) return;

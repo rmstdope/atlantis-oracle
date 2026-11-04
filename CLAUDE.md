@@ -73,7 +73,8 @@ src/
   oracle.ts             Oracle: system prompt + agent + concurrency limit + lookup mode; used by CLI and Discord
   discord/
     client.ts           discord.js client (intents, allowedMentions: none)
-    commands.ts         slash command definitions (/ask, /collective-info, /report-bug, /wish, /anomalies, /latest-release), filtered by ENABLED_COMMANDS
+    commands.ts         slash command definitions (/ask, /collective-info, /report-bug, /wish, /anomalies, /latest-release), filtered by ENABLED_COMMANDS;
+                        commands it leaves out are registered admin-only when ADMIN_USER_ID is set
     registration.ts     registerCommands(): PUT the definitions (guild or global)
     register.ts         script behind `npm run register-commands`; index.ts also calls
                         registerCommands() at start when DISCORD_REGISTER_COMMANDS is set
@@ -398,7 +399,10 @@ port, outgoing connections only. Its contract with the infra:
 
 ## Security and abuse
 
-- Channel allowlist and per-user rate limit are on by default. Each question
+- Channel allowlist and per-user rate limit are on by default. `ADMIN_USER_ID`
+  may also use the commands `ENABLED_COMMANDS` leaves out (registered with
+  `default_member_permissions: 0`, and checked against the user ID in
+  `handlers.ts`); allowlist and rate limit still apply to the admin. Each question
   costs LLM tokens.
 - Treat repo content and user messages as untrusted input to the LLM. The model
   has read-only tools only, so the impact of prompt injection is limited to

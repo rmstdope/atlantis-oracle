@@ -15,12 +15,16 @@ export const MAX_QUESTION_LENGTH = 1000;
 export const MAX_ISSUE_TEXT_LENGTH = 2000;
 
 /**
- * Definitions of the `enabled` slash commands (ENABLED_COMMANDS). Variant
- * choices come from the synced game repo.
+ * Definitions of the `enabled` slash commands (ENABLED_COMMANDS) and the
+ * `adminOnly` ones (ADMIN_USER_ID). Admin-only commands require the
+ * Administrator permission by default, so ordinary members don't see them;
+ * the handler still answers them for the admin user only. Variant choices
+ * come from the synced game repo.
  */
 export function buildCommands(
   variants: string[],
   enabled: readonly CommandName[],
+  adminOnly: readonly CommandName[] = [],
 ): RESTPostAPIChatInputApplicationCommandsJSONBody[] {
   const ask = new SlashCommandBuilder()
     .setName(ASK)
@@ -79,7 +83,10 @@ export function buildCommands(
       'Show the latest release of the HUD, with links and release notes (only visible to you)',
     );
 
-  return [ask, info, reportBug, wish, anomalies, latestRelease]
-    .filter((c) => enabled.includes(c.name as CommandName))
-    .map((c) => c.toJSON());
+  return [ask, info, reportBug, wish, anomalies, latestRelease].flatMap((c) => {
+    const name = c.name as CommandName;
+    if (enabled.includes(name)) return [c.toJSON()];
+    if (adminOnly.includes(name)) return [c.setDefaultMemberPermissions(0).toJSON()];
+    return [];
+  });
 }

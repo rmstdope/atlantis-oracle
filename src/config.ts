@@ -36,6 +36,10 @@ const envSchema = z.object({
   DISCORD_GUILD_ID: optionalString,
   DISCORD_REGISTER_COMMANDS: withDefault(z.stringbool(), 'false'),
   ALLOWED_CHANNEL_IDS: commaList,
+  ADMIN_USER_ID: z.preprocess(
+    (v) => (typeof v === 'string' && v.trim() !== '' ? v.trim() : undefined),
+    z.string().regex(/^\d+$/, 'ADMIN_USER_ID must be a Discord user ID (digits)').optional(),
+  ),
   // Unset = every command whose requirements are configured.
   ENABLED_COMMANDS: z.preprocess(
     (v) => (typeof v === 'string' && v.trim() !== '' ? v : undefined),
@@ -194,6 +198,13 @@ export interface DiscordConfig {
   rateLimitPerUserPerMinute: number;
   /** Slash commands to register and answer; thread follow-ups belong to `ask`. */
   commands: CommandName[];
+  /** Discord user who may also use `adminCommands` (ADMIN_USER_ID). */
+  adminUserId: string | undefined;
+  /**
+   * Commands whose requirements are configured but that ENABLED_COMMANDS leaves
+   * out: registered hidden (server admins only) and answered for the admin only.
+   */
+  adminCommands: CommandName[];
 }
 
 export interface Config {
@@ -209,7 +220,12 @@ export interface Config {
   discord: Partial<DiscordConfig> &
     Pick<
       DiscordConfig,
-      'allowedChannelIds' | 'rateLimitPerUserPerMinute' | 'commands' | 'registerOnStart'
+      | 'allowedChannelIds'
+      | 'rateLimitPerUserPerMinute'
+      | 'commands'
+      | 'adminUserId'
+      | 'adminCommands'
+      | 'registerOnStart'
     >;
 }
 
@@ -233,11 +249,11 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
       );
     }
   }
-  const commands =
-    e.ENABLED_COMMANDS ??
-    COMMAND_NAMES.filter((c) =>
-      c === 'anomalies' ? tracking : !GITHUB_COMMANDS.includes(c) || e.GITHUB_TOKEN !== undefined,
-    );
+  const available = COMMAND_NAMES.filter((c) =>
+    c === 'anomalies' ? tracking : !GITHUB_COMMANDS.includes(c) || e.GITHUB_TOKEN !== undefined,
+  );
+  const commands = [...new Set(e.ENABLED_COMMANDS ?? available)];
+  const adminCommands = e.ADMIN_USER_ID ? available.filter((c) => !commands.includes(c)) : [];
   return {
     llm: {
       baseURL: e.OPENAI_BASE_URL,
@@ -299,7 +315,9 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
       registerOnStart: e.DISCORD_REGISTER_COMMANDS,
       allowedChannelIds: e.ALLOWED_CHANNEL_IDS,
       rateLimitPerUserPerMinute: e.RATE_LIMIT_PER_USER_PER_MINUTE,
-      commands: [...new Set(commands)],
+      commands,
+      adminUserId: e.ADMIN_USER_ID,
+      adminCommands,
     },
   };
 }

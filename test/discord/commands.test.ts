@@ -9,4 +9,12 @@ describe('buildCommands', () => {
     expect(names(all as Parameters<typeof buildCommands>[1])).toEqual(all);
     expect(names(['report-bug'])).toEqual(['report-bug']);
   });
+
+  it('hides admin-only commands from members without Administrator', () => {
+    const commands = buildCommands(['standard'], ['ask'], ['wish']);
+    expect(commands.map((c) => [c.name, c.default_member_permissions])).toEqual([
+      ['ask', undefined],
+      ['wish', '0'],
+    ]);
+  });
 });
