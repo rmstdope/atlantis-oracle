@@ -29,7 +29,11 @@ describe('loadConfig', () => {
     expect(c.discord.rateLimitPerUserPerMinute).toBe(3);
     expect(c.discord.registerOnStart).toBe(false);
     expect(c.github).toBeUndefined();
-    expect(c.discord.commands).toEqual(['ask', 'collective-info', 'latest-release']);
+    expect(c.discord.commands).toEqual([
+      'access-collective-hive-mind',
+      'collective-info',
+      'latest-release',
+    ]);
     expect(c.hud).toEqual({
       repo: 'rmstdope/atlantis-hud',
       siteUrl: 'https://atlantis-hud.rmstdope.eu',
@@ -41,7 +45,7 @@ describe('loadConfig', () => {
 
   it('parses ENABLED_COMMANDS', () => {
     expect(loadConfig({ ...minimal, GITHUB_TOKEN: 't' }).discord.commands).toEqual([
-      'ask',
+      'access-collective-hive-mind',
       'collective-info',
       'report-bug',
       'wish',
@@ -52,9 +56,15 @@ describe('loadConfig', () => {
     expect(
       loadConfig({ ...minimal, GITHUB_TOKEN: 't', GITHUB_POLL_INTERVAL_MINUTES: '0' }).discord
         .commands,
-    ).toEqual(['ask', 'collective-info', 'report-bug', 'wish', 'latest-release']);
+    ).toEqual([
+      'access-collective-hive-mind',
+      'collective-info',
+      'report-bug',
+      'wish',
+      'latest-release',
+    ]);
     expect(loadConfig({ ...minimal, ENABLED_COMMANDS: '' }).discord.commands).toEqual([
-      'ask',
+      'access-collective-hive-mind',
       'collective-info',
       'latest-release',
     ]);
@@ -65,6 +75,10 @@ describe('loadConfig', () => {
     });
     expect(c.discord.commands).toEqual(['report-bug', 'collective-info']);
     expect(() => loadConfig({ ...minimal, ENABLED_COMMANDS: 'ask,nope' })).toThrow(ConfigError);
+    // `ask` is the old name of the ask command.
+    expect(loadConfig({ ...minimal, ENABLED_COMMANDS: 'ask' }).discord.commands).toEqual([
+      'access-collective-hive-mind',
+    ]);
     expect(() => loadConfig({ ...minimal, ENABLED_COMMANDS: ',' })).toThrow(ConfigError);
     expect(() => loadConfig({ ...minimal, ENABLED_COMMANDS: 'report-bug' })).toThrow(
       /GITHUB_TOKEN/,
@@ -85,13 +99,17 @@ describe('loadConfig', () => {
       ...minimal,
       GITHUB_TOKEN: 't',
       GITHUB_POLL_INTERVAL_MINUTES: '0',
+      // `ask` is the command's old name.
       ENABLED_COMMANDS: 'ask,collective-info',
       ADMIN_USER_ID: ' 123456789012345678 ',
     });
     expect(c.discord.adminUserId).toBe('123456789012345678');
     // anomalies needs tracking, so not even the admin gets it.
     expect(c.discord.adminCommands).toEqual(['report-bug', 'wish', 'latest-release']);
-    expect(loadConfig({ ...minimal, ENABLED_COMMANDS: 'ask' }).discord.adminCommands).toEqual([]);
+    expect(
+      loadConfig({ ...minimal, ENABLED_COMMANDS: 'access-collective-hive-mind' }).discord
+        .adminCommands,
+    ).toEqual([]);
     expect(loadConfig({ ...minimal, ADMIN_USER_ID: '' }).discord.adminUserId).toBeUndefined();
     expect(() => loadConfig({ ...minimal, ADMIN_USER_ID: '@henrik' })).toThrow(ConfigError);
     expect(() => loadConfig({ ...minimal, ADMIN_USER_ID: '1234' })).toThrow(ConfigError);

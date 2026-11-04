@@ -15,7 +15,7 @@ The LLM backend must stay swappable: hosted OpenAI, or a local server such as
 Ollama, llama.cpp, vLLM or LM Studio. This is a core requirement, not an extra
 (see "LLM portability" below).
 
-Status: MVP. `/ask`, thread follow-ups, `/collective-info`, `/report-bug`, `/wish`, `/anomalies` and `/latest-release` work. It ships as a headless
+Status: MVP. `/access-collective-hive-mind`, thread follow-ups, `/collective-info`, `/report-bug`, `/wish`, `/anomalies` and `/latest-release` work. It ships as a headless
 Docker worker deployed by rmstdope-infra (see "Deployment"). Planned next:
 @mention entry point, an evals harness, and turning `path:line`
 citations into GitHub links. Keep this file in sync with the code: if a change
@@ -73,7 +73,7 @@ src/
   oracle.ts             Oracle: system prompt + agent + concurrency limit + lookup mode; used by CLI and Discord
   discord/
     client.ts           discord.js client (intents, allowedMentions: none)
-    commands.ts         slash command definitions (/ask, /collective-info, /report-bug, /wish, /anomalies, /latest-release), filtered by ENABLED_COMMANDS;
+    commands.ts         slash command definitions (/access-collective-hive-mind, /collective-info, /report-bug, /wish, /anomalies, /latest-release), filtered by ENABLED_COMMANDS;
                         commands it leaves out are registered admin-only when ADMIN_USER_ID is set
     registration.ts     registerCommands(): PUT the definitions (guild or global)
     register.ts         script behind `npm run register-commands`; index.ts also calls
@@ -147,21 +147,21 @@ test/                   mirrors src/; helpers/ has the fixture path and a script
 
 ### Request flow
 
-1. `discord/handlers.ts` receives `/ask` or a message in a bot-owned thread. It
-   checks the channel allowlist. For `/ask` it also checks, synchronously, that
+1. `discord/handlers.ts` receives `/access-collective-hive-mind` or a message in a bot-owned thread. It
+   checks the channel allowlist. For `/access-collective-hive-mind` it also checks, synchronously, that
    the bot may send there (`appPermissions`, not a locked thread), because the
    header is the bot's own message. Then it calls
    `deferReply({ flags: Ephemeral })` right away (Discord gives only 3 seconds
    before the interaction expires), so every later refusal or failure is a
    private edit:
-   inside an answer thread only that thread's asker may use `/ask` (checked
+   inside an answer thread only that thread's asker may use `/access-collective-hive-mind` (checked
    before the rate limit, so it costs no slot), then the rate limit, then
    `oracle.screen()` (the topic check, `LLM_TOPIC_CHECK`). Only when all pass is
    the question header posted, as a normal channel message
    (`formatQuestion`, links neutralized, no embeds, clipped to one message), the
    private reply deleted, and a thread started from the header (only with
    permission to create and post in threads; otherwise the answer goes inline).
-   `/ask` inside an answer thread continues that thread's conversation. A header posted inside an answer
+   `/access-collective-hive-mind` inside an answer thread continues that thread's conversation. A header posted inside an answer
    thread is read back by `history.ts` as the asker's turn (`headerQuestion`). The thread name ends in ` · <variant>`, so
    follow-ups need no stored state.
 2. Follow-ups are accepted only from the asker, whose ID is the first mention
@@ -413,7 +413,7 @@ port, outgoing connections only. Its contract with the infra:
   other URLs are defanged (`hxxps[:]//evil[.]example`), with no exemption for
   code (Discord's code-span rules are too subtle to mirror safely). Answers and
   progress messages are sent with `SuppressEmbeds`. Only the asker can steer an
-  answer thread: their follow-ups only, and `/ask` by others inside it is refused.
+  answer thread: their follow-ups only, and `/access-collective-hive-mind` by others inside it is refused.
 - The topic check (`llm/topic.ts`) limits cost and scope; it is not an
   injection defence. It is an LLM reading attacker text, and an injection can
   ride on a genuine question. It must fail open, and false rejections matter
@@ -421,7 +421,7 @@ port, outgoing connections only. Its contract with the infra:
   failed call counts as an error there, not a pass). It runs outside the
   `LLM_MAX_CONCURRENT` limiter on purpose (see `Oracle.screen`) and gives up
   after 60 s, answering the question.
-- Player text that the bot repeats publicly (the `/ask` question header, the
+- Player text that the bot repeats publicly (the `/access-collective-hive-mind` question header, the
   first line in the `/report-bug` and `/wish` reply) follows the same link rules
   as answers.
 - `/report-bug` and `/wish` are the only things that write anywhere: Discord

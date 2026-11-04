@@ -10,7 +10,13 @@ import {
   type SendableChannels,
   type ThreadChannel,
 } from 'discord.js';
-import type { CommandName, Config, DiscordConfig, GithubConfig } from '../config.js';
+import {
+  RENAMED_COMMANDS,
+  type CommandName,
+  type Config,
+  type DiscordConfig,
+  type GithubConfig,
+} from '../config.js';
 import type { Logger } from '../logger.js';
 import type { ChatTurn, Oracle } from '../oracle.js';
 import type { GameRepo } from '../repo/sync.js';
@@ -223,10 +229,10 @@ export function registerHandlers(client: Client, deps: HandlerDeps): void {
         if (askerId !== interaction.user.id) {
           await refuse(
             askerId
-              ? 'This thread serves another drone. Use /ask in the channel to start your own.'
+              ? `This thread serves another drone. Use /${ASK} in the channel to start your own.`
               : askerId === null
-                ? 'The origin of this thread cannot be verified. Use /ask in the channel.'
-                : 'The origin of this thread could not be verified. Repeat later, or use /ask in the channel.',
+                ? `The origin of this thread cannot be verified. Use /${ASK} in the channel.`
+                : `The origin of this thread could not be verified. Repeat later, or use /${ASK} in the channel.`,
           );
           return;
         }
@@ -578,9 +584,12 @@ export function registerHandlers(client: Client, deps: HandlerDeps): void {
     // Commands still registered from an earlier configuration.
     if (!mayUse(discord, interaction.user.id, interaction.commandName)) {
       // Admin-only commands are visible to other server administrators too.
-      const content = discord.adminCommands.includes(interaction.commandName as CommandName)
-        ? 'This function is still being assimilated. It is not yet available to you.'
-        : 'This function has been deactivated.';
+      const renamed = RENAMED_COMMANDS[interaction.commandName];
+      const content = renamed
+        ? `This function has been renamed. Use /${renamed}.`
+        : discord.adminCommands.includes(interaction.commandName as CommandName)
+          ? 'This function is still being assimilated. It is not yet available to you.'
+          : 'This function has been deactivated.';
       await interaction.reply({ content, flags: MessageFlags.Ephemeral }).catch(() => {});
       return;
     }
@@ -605,7 +614,7 @@ export function registerHandlers(client: Client, deps: HandlerDeps): void {
   client.on(Events.MessageCreate, async (message) => {
     // Only follow-ups in threads the bot started; @mentions come later.
     if (message.author.bot || !message.inGuild() || !message.channel.isThread()) return;
-    if (!mayUse(discord, message.author.id, 'ask')) return;
+    if (!mayUse(discord, message.author.id, ASK)) return;
     const thread = message.channel;
     if (!isAnswerThread(thread)) return;
     if (!channelAllowed(thread.id, thread.parentId)) return;

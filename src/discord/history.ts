@@ -92,7 +92,7 @@ export function buildTurns(
   }
   for (const m of kept.slice(-HISTORY_LIMIT)) {
     const asked = m.authorId === botId ? headerQuestion(m.content) : undefined;
-    // A question header (/ask inside the thread) is the asker's turn, not the bot's.
+    // A question header (the ask command inside the thread) is the asker's turn, not the bot's.
     if (asked !== undefined) push('user', asked);
     else if (m.authorId === botId) push('assistant', cleanBotMessage(m.content));
     else push('user', m.content.trim());
