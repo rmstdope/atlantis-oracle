@@ -94,6 +94,7 @@ describe('loadConfig', () => {
     expect(loadConfig({ ...minimal, ENABLED_COMMANDS: 'ask' }).discord.adminCommands).toEqual([]);
     expect(loadConfig({ ...minimal, ADMIN_USER_ID: '' }).discord.adminUserId).toBeUndefined();
     expect(() => loadConfig({ ...minimal, ADMIN_USER_ID: '@henrik' })).toThrow(ConfigError);
+    expect(() => loadConfig({ ...minimal, ADMIN_USER_ID: '1234' })).toThrow(ConfigError);
   });
 
   it('enables GitHub bug reports only with a token', () => {

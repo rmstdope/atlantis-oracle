@@ -293,6 +293,8 @@ const CHANNEL_BOUND: readonly CommandName[] = ['ask', 'report-bug', 'wish'];
  */
 export function formatInfo(info: {
   commands: readonly CommandName[];
+  /** Unreleased commands the viewer may use as ADMIN_USER_ID; listed marked as such. */
+  adminOnly?: readonly CommandName[];
   /** Whether new comments on reported issues are relayed (GITHUB_POLL_INTERVAL_MINUTES > 0). */
   tracking: boolean;
   /** Whether the channel the command was used in is on the allowlist. */
@@ -306,12 +308,14 @@ export function formatInfo(info: {
   defaultVariant: string;
   queueLength: number;
 }): string {
-  const ask = info.commands.includes('ask');
+  const adminOnly = info.adminOnly ?? [];
+  const usable = [...info.commands, ...adminOnly];
+  const ask = usable.includes('ask');
   const help = commandHelp(info.tracking);
   const commands = (Object.keys(help) as CommandName[])
-    .filter((c) => info.commands.includes(c))
-    .map((c) => `- ${help[c]}`);
-  const bound = CHANNEL_BOUND.filter((c) => info.commands.includes(c));
+    .filter((c) => usable.includes(c))
+    .map((c) => `- ${help[c]}${adminOnly.includes(c) ? ' *(admin only, not released)*' : ''}`);
+  const bound = CHANNEL_BOUND.filter((c) => usable.includes(c));
   const restricted =
     !info.channelAllowed && bound.length > 0
       ? [

@@ -38,7 +38,10 @@ const envSchema = z.object({
   ALLOWED_CHANNEL_IDS: commaList,
   ADMIN_USER_ID: z.preprocess(
     (v) => (typeof v === 'string' && v.trim() !== '' ? v.trim() : undefined),
-    z.string().regex(/^\d+$/, 'ADMIN_USER_ID must be a Discord user ID (digits)').optional(),
+    z
+      .string()
+      .regex(/^\d{17,20}$/, 'ADMIN_USER_ID must be a Discord user ID (17-20 digits)')
+      .optional(),
   ),
   // Unset = every command whose requirements are configured.
   ENABLED_COMMANDS: z.preprocess(

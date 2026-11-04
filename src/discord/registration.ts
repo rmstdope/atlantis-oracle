@@ -22,8 +22,10 @@ export async function registerCommands(
   await rest.put(route, { body: commands });
   logger.info(
     {
-      commands: discord.commands,
-      adminCommands: discord.adminCommands,
+      commands: commands.filter((c) => c.default_member_permissions == null).map((c) => c.name),
+      adminCommands: commands
+        .filter((c) => c.default_member_permissions != null)
+        .map((c) => c.name),
       scope: discord.guildId ? `guild ${discord.guildId}` : 'global',
     },
     'Registered slash commands',

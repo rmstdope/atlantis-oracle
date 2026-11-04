@@ -20,7 +20,16 @@ import { fileIssue } from '../github/issues.js';
 import type { IssueKind } from '../github/store.js';
 import type { AnomalyTracker } from '../github/tracker.js';
 import { formatAnomalyList, isAnomalyThreadName } from './anomalies.js';
-import { ANOMALIES, ASK, INFO, LATEST_RELEASE, REPORT_BUG, WISH } from './commands.js';
+import {
+  ANOMALIES,
+  ASK,
+  INFO,
+  LATEST_RELEASE,
+  REPORT_BUG,
+  WISH,
+  commandsFor,
+  mayUse,
+} from './commands.js';
 import {
   describeToolCall,
   footer,
@@ -66,11 +75,6 @@ export interface HandlerDeps {
 export function registerHandlers(client: Client, deps: HandlerDeps): void {
   const { discord, logger } = deps;
   const rateLimiter = new RateLimiter(discord.rateLimitPerUserPerMinute);
-  /** Commands this user may use: the enabled ones, plus admin-only ones for the admin. */
-  const commandsFor = (userId: string): CommandName[] =>
-    userId === discord.adminUserId
-      ? [...discord.commands, ...discord.adminCommands]
-      : discord.commands;
   const issueLimiter = new RateLimiter(deps.config.github?.reportsPerUserPerHour ?? 1, 3_600_000);
 
   const channelAllowed = (channelId: string | null, parentId?: string | null) =>
@@ -289,8 +293,10 @@ export function registerHandlers(client: Client, deps: HandlerDeps): void {
   async function handleInfo(interaction: ChatInputCommandInteraction): Promise<void> {
     const { repo, config } = deps;
     const channel = interaction.channel;
+    const { released, adminOnly } = commandsFor(discord, interaction.user.id);
     const content = formatInfo({
-      commands: commandsFor(interaction.user.id),
+      commands: released,
+      adminOnly,
       tracking: deps.anomalies !== undefined,
       channelAllowed: channelAllowed(
         interaction.channelId,
@@ -570,10 +576,12 @@ export function registerHandlers(client: Client, deps: HandlerDeps): void {
   client.on(Events.InteractionCreate, async (interaction) => {
     if (!interaction.isChatInputCommand()) return;
     // Commands still registered from an earlier configuration.
-    if (!commandsFor(interaction.user.id).includes(interaction.commandName as CommandName)) {
-      await interaction
-        .reply({ content: 'This function has been deactivated.', flags: MessageFlags.Ephemeral })
-        .catch(() => {});
+    if (!mayUse(discord, interaction.user.id, interaction.commandName)) {
+      // Admin-only commands are visible to other server administrators too.
+      const content = discord.adminCommands.includes(interaction.commandName as CommandName)
+        ? 'This function is still being assimilated. It is not yet available to you.'
+        : 'This function has been deactivated.';
+      await interaction.reply({ content, flags: MessageFlags.Ephemeral }).catch(() => {});
       return;
     }
     try {
@@ -596,8 +604,8 @@ export function registerHandlers(client: Client, deps: HandlerDeps): void {
 
   client.on(Events.MessageCreate, async (message) => {
     // Only follow-ups in threads the bot started; @mentions come later.
-    if (!commandsFor(message.author.id).includes('ask')) return;
     if (message.author.bot || !message.inGuild() || !message.channel.isThread()) return;
+    if (!mayUse(discord, message.author.id, 'ask')) return;
     const thread = message.channel;
     if (!isAnswerThread(thread)) return;
     if (!channelAllowed(thread.id, thread.parentId)) return;
