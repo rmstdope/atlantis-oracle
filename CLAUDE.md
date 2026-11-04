@@ -83,7 +83,8 @@ src/
     history.ts          rebuilds conversation turns from a Discord thread (asker and bot only)
     links.ts            neutralizeLinks(): answers may only link into the game repo
     rateLimit.ts        per-user sliding window
-    releases.ts         posts new-release announcements in RELEASE_ANNOUNCE_CHANNEL_ID
+    releases.ts         posts new-release announcements in RELEASE_ANNOUNCE_CHANNEL_ID and edits
+                        them when the release notes change
     anomalies.ts        new comments as Borg messages (anomaly or wish), /anomalies list; posts them in a thread on the report
   llm/
     client.ts           LlmClient interface + OpenAI SDK implementation
@@ -102,7 +103,8 @@ src/
     issues.ts           /report-bug and /wish: issue title ([Bug]/[Wish]) and body, neutralizes @mentions
     store.ts            AnomalyStore: tracked reports in one JSON file (zod-checked, atomic save)
     releases.ts         ReleaseWatcher: latest release (10-min cache) for /latest-release; announces
-                        new ones through an Announce callback, last one kept in RELEASE_STATE_PATH
+                        new ones through an Announcer (post + revise: notes are often written after
+                        publishing), last one and its message kept in RELEASE_STATE_PATH
     tracker.ts          AnomalyTracker: polls changed issues, finds new comments in timelines, hands them to a Deliver callback
   rules/
     build.ts            builds rules HTML: git archive -> make GAME=<v> -> <v> genrules,
