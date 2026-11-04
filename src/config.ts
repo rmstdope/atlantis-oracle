@@ -17,9 +17,11 @@ const commaList = z.preprocess(
   z.array(z.string()),
 );
 
+/** The command that asks the Collective a question (called `/ask` until renamed). */
+export const ASK_COMMAND = 'access-collective-hive-mind';
 /** Slash commands the bot offers; ENABLED_COMMANDS picks a subset. */
 export const COMMAND_NAMES = [
-  'access-collective-hive-mind',
+  ASK_COMMAND,
   'collective-info',
   'report-bug',
   'wish',
@@ -29,6 +31,11 @@ export const COMMAND_NAMES = [
 /** Commands that need GITHUB_TOKEN; `anomalies` also needs tracking switched on. */
 const GITHUB_COMMANDS: readonly CommandName[] = ['report-bug', 'wish', 'anomalies'];
 export type CommandName = (typeof COMMAND_NAMES)[number];
+/**
+ * Earlier names of renamed commands: still accepted in ENABLED_COMMANDS, and
+ * answered with a pointer to the new name while Discord still offers them.
+ */
+export const RENAMED_COMMANDS: Readonly<Record<string, CommandName>> = { ask: ASK_COMMAND };
 
 const envSchema = z.object({
   DISCORD_TOKEN: optionalString,
@@ -53,8 +60,7 @@ const envSchema = z.object({
           .split(',')
           .map((s) => s.trim())
           .filter(Boolean)
-          // The command's name before it was renamed, so older .env files keep working.
-          .map((s) => (s === 'ask' ? 'access-collective-hive-mind' : s)),
+          .map((s) => RENAMED_COMMANDS[s] ?? s),
       )
       .pipe(z.array(z.enum(COMMAND_NAMES)).min(1))
       .optional(),
@@ -201,7 +207,7 @@ export interface DiscordConfig {
   registerOnStart: boolean;
   allowedChannelIds: string[];
   rateLimitPerUserPerMinute: number;
-  /** Slash commands to register and answer; thread follow-ups belong to `access-collective-hive-mind`. */
+  /** Slash commands to register and answer; thread follow-ups belong to ASK_COMMAND. */
   commands: CommandName[];
   /** Discord user who may also use `adminCommands` (ADMIN_USER_ID). */
   adminUserId: string | undefined;

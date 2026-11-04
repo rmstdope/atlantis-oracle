@@ -3,9 +3,9 @@ import {
   SlashCommandBuilder,
   type RESTPostAPIChatInputApplicationCommandsJSONBody,
 } from 'discord.js';
-import type { CommandName, DiscordConfig } from '../config.js';
+import { ASK_COMMAND, type CommandName, type DiscordConfig } from '../config.js';
 
-export const ASK: CommandName = 'access-collective-hive-mind';
+export const ASK: CommandName = ASK_COMMAND;
 export const INFO: CommandName = 'collective-info';
 export const REPORT_BUG: CommandName = 'report-bug';
 export const WISH: CommandName = 'wish';

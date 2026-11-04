@@ -75,6 +75,10 @@ describe('loadConfig', () => {
     });
     expect(c.discord.commands).toEqual(['report-bug', 'collective-info']);
     expect(() => loadConfig({ ...minimal, ENABLED_COMMANDS: 'ask,nope' })).toThrow(ConfigError);
+    // `ask` is the old name of the ask command.
+    expect(loadConfig({ ...minimal, ENABLED_COMMANDS: 'ask' }).discord.commands).toEqual([
+      'access-collective-hive-mind',
+    ]);
     expect(() => loadConfig({ ...minimal, ENABLED_COMMANDS: ',' })).toThrow(ConfigError);
     expect(() => loadConfig({ ...minimal, ENABLED_COMMANDS: 'report-bug' })).toThrow(
       /GITHUB_TOKEN/,
