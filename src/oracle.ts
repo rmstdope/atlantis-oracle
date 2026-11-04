@@ -82,7 +82,7 @@ export class Oracle {
    * check lets the message through.
    *
    * Deliberately not queued behind LLM_MAX_CONCURRENT: queued, a rejection
-   * would wait for every answer ahead of it, and /ask's deferred reply (which
+   * would wait for every answer ahead of it, and /access-collective-hive-mind's deferred reply (which
    * the check runs inside) expires after 15 minutes. The cost is one small
    * extra request in parallel. A single-slot local server queues it itself, so
    * there the check may wait for the running research call.

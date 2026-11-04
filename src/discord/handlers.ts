@@ -223,10 +223,10 @@ export function registerHandlers(client: Client, deps: HandlerDeps): void {
         if (askerId !== interaction.user.id) {
           await refuse(
             askerId
-              ? 'This thread serves another drone. Use /ask in the channel to start your own.'
+              ? 'This thread serves another drone. Use /access-collective-hive-mind in the channel to start your own.'
               : askerId === null
-                ? 'The origin of this thread cannot be verified. Use /ask in the channel.'
-                : 'The origin of this thread could not be verified. Repeat later, or use /ask in the channel.',
+                ? 'The origin of this thread cannot be verified. Use /access-collective-hive-mind in the channel.'
+                : 'The origin of this thread could not be verified. Repeat later, or use /access-collective-hive-mind in the channel.',
           );
           return;
         }
@@ -605,7 +605,7 @@ export function registerHandlers(client: Client, deps: HandlerDeps): void {
   client.on(Events.MessageCreate, async (message) => {
     // Only follow-ups in threads the bot started; @mentions come later.
     if (message.author.bot || !message.inGuild() || !message.channel.isThread()) return;
-    if (!mayUse(discord, message.author.id, 'ask')) return;
+    if (!mayUse(discord, message.author.id, 'access-collective-hive-mind')) return;
     const thread = message.channel;
     if (!isAnswerThread(thread)) return;
     if (!channelAllowed(thread.id, thread.parentId)) return;

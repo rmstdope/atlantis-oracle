@@ -69,7 +69,7 @@ const QUESTION_PREFIX = '**Question:** ';
 const DISCORD_MESSAGE_LIMIT = 2000;
 const QUESTION_SUFFIX = '[Accessing collective hive mind ... ]';
 
-/** The /ask reply that becomes the thread's starter message. */
+/** The /access-collective-hive-mind reply that becomes the thread's starter message. */
 export function formatQuestion(userId: string, question: string): string {
   const head = `We are Borg!\n<@${userId}> asked:\n${QUESTION_PREFIX}`;
   const tail = `\n${QUESTION_SUFFIX}`;
@@ -124,7 +124,7 @@ export function isOffTopicReply(content: string): boolean {
 
 /**
  * The question in a bot message that is a question header (formatQuestion),
- * e.g. from /ask inside an answer thread; undefined for any other message.
+ * e.g. from /access-collective-hive-mind inside an answer thread; undefined for any other message.
  */
 export function headerQuestion(content: string): string | undefined {
   return /^We are Borg!\n<@!?\d+> asked:\n/.test(content) ? parseQuestion(content) : undefined;
@@ -273,7 +273,8 @@ function commandHelp(tracking: boolean): Record<CommandName, string> {
     ? '; replies from our makers are relayed to a thread on your report'
     : '';
   return {
-    ask: '`/ask question:<text> [variant:<name>]` — Submit a query about Atlantis. We search the rules and the game source and answer with sources, usually in a new thread. Within that thread, further transmissions from you are follow-ups.',
+    'access-collective-hive-mind':
+      '`/access-collective-hive-mind question:<text> [variant:<name>]` — Submit a query about Atlantis. We search the rules and the game source and answer with sources, usually in a new thread. Within that thread, further transmissions from you are follow-ups.',
     'report-bug': `\`/report-bug description:<text>\` — Report an anomaly in the Collective. It becomes a public GitHub issue${relayed}.`,
     wish: '`/wish description:<text>` — Transmit a desire for a new function or change. It is filed as a public GitHub issue, like an anomaly.',
     anomalies:
@@ -285,11 +286,11 @@ function commandHelp(tracking: boolean): Record<CommandName, string> {
 }
 
 /** Commands that are refused outside DISCORD_ALLOWED_CHANNEL_IDS. */
-const CHANNEL_BOUND: readonly CommandName[] = ['ask', 'report-bug', 'wish'];
+const CHANNEL_BOUND: readonly CommandName[] = ['access-collective-hive-mind', 'report-bug', 'wish'];
 
 /**
  * The /collective-info reply: who the bot is, the enabled commands and, when
- * /ask is enabled, the game source it answers from.
+ * /access-collective-hive-mind is enabled, the game source it answers from.
  */
 export function formatInfo(info: {
   commands: readonly CommandName[];
@@ -310,7 +311,7 @@ export function formatInfo(info: {
 }): string {
   const adminOnly = info.adminOnly ?? [];
   const usable = [...info.commands, ...adminOnly];
-  const ask = usable.includes('ask');
+  const ask = usable.includes('access-collective-hive-mind');
   const help = commandHelp(info.tracking);
   const commands = (Object.keys(help) as CommandName[])
     .filter((c) => usable.includes(c))

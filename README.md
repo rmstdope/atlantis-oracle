@@ -19,14 +19,14 @@ game source. If the rules don't settle it, it researches the source code. Then
 it writes a player-friendly answer that cites the rules sections and files it
 used.
 
-> **Status:** MVP. `/ask`, follow-up questions in answer threads, and
+> **Status:** MVP. `/access-collective-hive-mind`, follow-up questions in answer threads, and
 > `/collective-info` work. @mentions and a Docker image are planned. See
 > [CLAUDE.md](CLAUDE.md) for the architecture and project conventions.
 
 ## How it works
 
 ```
-Discord user ──/ask──▶ Bot ──▶ LLM (OpenAI-compatible API)
+Discord user ──/access-collective-hive-mind──▶ Bot ──▶ LLM (OpenAI-compatible API)
                                  │   ▲
                      tool calls  │   │ tool results
                                  ▼   │
@@ -38,7 +38,7 @@ Discord user ──/ask──▶ Bot ──▶ LLM (OpenAI-compatible API)
      (make + genrules → Markdown)
 ```
 
-1. A player asks a question with `/ask`.
+1. A player asks a question with `/access-collective-hive-mind`.
 2. The bot sends the question to an LLM, together with notes on any game
    abbreviations in it (e.g. SSTO = summon storm). The LLM first writes a
    short research plan. Then it gets a set of **tools**, at first only the
@@ -114,7 +114,7 @@ base data in `gamedata.cpp`. Each variant sets its own game constants in
 `<variant>/rules.cpp` and enables, disables or modifies items, skills and
 objects in `<variant>/extra.cpp`. The bot takes this into account. It uses a
 configurable default variant, and players can pick another one with the
-`variant` option on `/ask` (or name it in the question). The bot finds the
+`variant` option on `/access-collective-hive-mind` (or name it in the question). The bot finds the
 variants itself: every top-level directory with a `rules.cpp`, except test
 directories.
 
@@ -258,8 +258,8 @@ All configuration is done with environment variables, read from `.env` in develo
 | `DISCORD_GUILD_ID` | no | | Register commands to one server only. They update instantly, which is useful in development. If unset, commands are registered globally. |
 | `DISCORD_REGISTER_COMMANDS` | no | `false` | Push the slash command definitions to Discord at every start, after the first repo sync, so there is no separate `npm run register-commands` step. Meant for deployments; global commands can take up to an hour to update. |
 | `ALLOWED_CHANNEL_IDS` | no | *(all)* | Comma-separated channel IDs where the bot answers |
-| `ENABLED_COMMANDS` | no | *(all)* | Comma-separated slash commands to offer: `ask`, `collective-info`, `report-bug`, `wish`, `anomalies`, `latest-release`. If unset, all are offered, except `report-bug`, `wish` and `anomalies` when `GITHUB_TOKEN` is unset, and `anomalies` when `GITHUB_POLL_INTERVAL_MINUTES` is `0`. Disabling `ask` also disables follow-ups in answer threads. Run `npm run register-commands` after changing it (or set `DISCORD_REGISTER_COMMANDS`). |
-| `ADMIN_USER_ID` | no | | Discord user ID that may also use every command `ENABLED_COMMANDS` leaves out, to try features before they are released. A command still needs its requirements (`GITHUB_TOKEN`, tracking). These commands are registered visible to server administrators only (Discord's Administrator permission); if the admin isn't one, grant them the command under Server Settings → Integrations. They are kept out of DMs. Other server administrators see them too but are told they are not yet available. `/collective-info` lists them for the admin, marked as not released. Their output is as public as for anyone: `/ask` posts its question and answer thread in the channel, so try them in a private channel the bot may use. Has no effect while `ENABLED_COMMANDS` is unset, since everything available is then enabled. Re-register commands after changing it. |
+| `ENABLED_COMMANDS` | no | *(all)* | Comma-separated slash commands to offer: `access-collective-hive-mind` (also accepted under its old name `ask`), `collective-info`, `report-bug`, `wish`, `anomalies`, `latest-release`. If unset, all are offered, except `report-bug`, `wish` and `anomalies` when `GITHUB_TOKEN` is unset, and `anomalies` when `GITHUB_POLL_INTERVAL_MINUTES` is `0`. Disabling `access-collective-hive-mind` also disables follow-ups in answer threads. Run `npm run register-commands` after changing it (or set `DISCORD_REGISTER_COMMANDS`). |
+| `ADMIN_USER_ID` | no | | Discord user ID that may also use every command `ENABLED_COMMANDS` leaves out, to try features before they are released. A command still needs its requirements (`GITHUB_TOKEN`, tracking). These commands are registered visible to server administrators only (Discord's Administrator permission); if the admin isn't one, grant them the command under Server Settings → Integrations. They are kept out of DMs. Other server administrators see them too but are told they are not yet available. `/collective-info` lists them for the admin, marked as not released. Their output is as public as for anyone: `/access-collective-hive-mind` posts its question and answer thread in the channel, so try them in a private channel the bot may use. Has no effect while `ENABLED_COMMANDS` is unset, since everything available is then enabled. Re-register commands after changing it. |
 | `OPENAI_BASE_URL` | no | `https://api.openai.com/v1` | Any OpenAI-compatible endpoint |
 | `OPENAI_API_KEY` | yes* | | API key. *Local servers usually accept any non-empty value. |
 | `LLM_MODEL` | yes | | Model name as the endpoint knows it, e.g. `gpt-4.1-mini`, `qwen3:32b` |
@@ -372,13 +372,13 @@ need adjustments in `src/llm/prompts.ts`.
 
 | Command | Description |
 |---|---|
-| `/ask question:<text> [variant:<name>]` | Ask a question. The answer is posted in a new thread, and a status message shows the research steps while you wait. Used inside a thread, the bot answers in that thread. |
+| `/access-collective-hive-mind question:<text> [variant:<name>]` | Ask a question. The answer is posted in a new thread, and a status message shows the research steps while you wait. Used inside a thread, the bot answers in that thread. |
 | Message in an answer thread | Ask a follow-up (only the player who asked; others can talk there without the bot answering). The bot uses the thread's recent conversation as context. |
 | `/report-bug description:<text>` | File a bug report as a public GitHub issue (only when `GITHUB_TOKEN` is set). The channel sees who reported it, the first line and the issue link; errors are only shown to you. New comments on the issue are posted in a thread on the report: comments from the repository's team are quoted, comments from anyone else are only counted. Labels, linked pull requests, closing and other state changes are not posted (`/anomalies` shows the current status). The first line becomes the title; the issue also records your Discord username and, when used in an answer thread, a link to it. Re-run `npm run register-commands` after setting the token. |
 | `/wish description:<text>` | Wish for a feature or change. Works like `/report-bug`, but the issue is titled `[Wish] …` and gets the `GITHUB_WISH_LABELS`. |
 | `/anomalies` | List your bug reports and wishes that are being followed, with their status and labels (only visible to you) |
 | `/latest-release` | Show the HUD's latest release from GitHub: version, date, links to the release and the HUD's website, and the release notes. Only visible to you. Works without `GITHUB_TOKEN` (the repository is public). |
-| `/collective-info` | Introduce the bot (the Discord bot of Atlantis HUD) and list the commands enabled on this server. When `/ask` is enabled, it also explains how answers are made and shows the game repository, commit, variants and queue in use. Only visible to you. |
+| `/collective-info` | Introduce the bot (the Discord bot of Atlantis HUD) and list the commands enabled on this server. When `/access-collective-hive-mind` is enabled, it also explains how answers are made and shows the game repository, commit, variants and queue in use. Only visible to you. |
 
 The answers are generated by an LLM and **can be wrong**. The source references
 in each answer let you check the claim yourself. When in doubt, your GM's

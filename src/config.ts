@@ -19,7 +19,7 @@ const commaList = z.preprocess(
 
 /** Slash commands the bot offers; ENABLED_COMMANDS picks a subset. */
 export const COMMAND_NAMES = [
-  'ask',
+  'access-collective-hive-mind',
   'collective-info',
   'report-bug',
   'wish',
@@ -52,7 +52,9 @@ const envSchema = z.object({
         v
           .split(',')
           .map((s) => s.trim())
-          .filter(Boolean),
+          .filter(Boolean)
+          // The command's name before it was renamed, so older .env files keep working.
+          .map((s) => (s === 'ask' ? 'access-collective-hive-mind' : s)),
       )
       .pipe(z.array(z.enum(COMMAND_NAMES)).min(1))
       .optional(),
@@ -199,7 +201,7 @@ export interface DiscordConfig {
   registerOnStart: boolean;
   allowedChannelIds: string[];
   rateLimitPerUserPerMinute: number;
-  /** Slash commands to register and answer; thread follow-ups belong to `ask`. */
+  /** Slash commands to register and answer; thread follow-ups belong to `access-collective-hive-mind`. */
   commands: CommandName[];
   /** Discord user who may also use `adminCommands` (ADMIN_USER_ID). */
   adminUserId: string | undefined;

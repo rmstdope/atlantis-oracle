@@ -76,7 +76,7 @@ export function buildTurns(
       !offTopic(m) &&
       !(m.id !== undefined && rejected.has(m.id)) &&
       (bot || !askerId || m.authorId === askerId) &&
-      // Another player's question header, from before /ask was asker-only.
+      // Another player's question header, from before /access-collective-hive-mind was asker-only.
       !(askerId && headerQuestion(m.content) !== undefined && parseAsker(m.content) !== askerId);
     // The bot's answer to a dropped message (in older threads, other players'
     // questions) goes too: its first part replies to it, later parts follow.
@@ -92,7 +92,7 @@ export function buildTurns(
   }
   for (const m of kept.slice(-HISTORY_LIMIT)) {
     const asked = m.authorId === botId ? headerQuestion(m.content) : undefined;
-    // A question header (/ask inside the thread) is the asker's turn, not the bot's.
+    // A question header (/access-collective-hive-mind inside the thread) is the asker's turn, not the bot's.
     if (asked !== undefined) push('user', asked);
     else if (m.authorId === botId) push('assistant', cleanBotMessage(m.content));
     else push('user', m.content.trim());

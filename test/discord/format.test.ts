@@ -217,7 +217,7 @@ describe('formatQuestion', () => {
 
 describe('formatInfo', () => {
   const base = {
-    commands: ['ask', 'collective-info', 'latest-release'] as const,
+    commands: ['access-collective-hive-mind', 'collective-info', 'latest-release'] as const,
     tracking: true,
     channelAllowed: true,
     hudSiteUrl: 'https://hud.example.com',
@@ -236,7 +236,7 @@ describe('formatInfo', () => {
       /^We are \*\*The Collective\*\*, the Discord bot of \[Atlantis HUD\]\(<https:\/\/hud\.example\.com>\)/,
     );
     expect(text).toContain('assimilated the rules');
-    expect(text).toContain('`/ask question:<text>');
+    expect(text).toContain('`/access-collective-hive-mind question:<text>');
     expect(text).toContain('`/latest-release`');
     expect(text).toContain('`/collective-info`');
     expect(text).not.toContain('/report-bug');
@@ -252,7 +252,14 @@ describe('formatInfo', () => {
   it('fits in one Discord message with every command enabled and no sync yet', () => {
     const text = formatInfo({
       ...base,
-      commands: ['ask', 'collective-info', 'report-bug', 'wish', 'anomalies', 'latest-release'],
+      commands: [
+        'access-collective-hive-mind',
+        'collective-info',
+        'report-bug',
+        'wish',
+        'anomalies',
+        'latest-release',
+      ],
       branch: '',
       syncedAt: undefined,
       variants: [],
@@ -266,7 +273,7 @@ describe('formatInfo', () => {
     expect(text.length).toBeLessThanOrEqual(2000);
   });
 
-  it('leaves out the rules intro and source state when /ask is disabled', () => {
+  it('leaves out the rules intro and source state when /access-collective-hive-mind is disabled', () => {
     const text = formatInfo({ ...base, commands: ['collective-info', 'latest-release'] });
     expect(text).toMatch(/^We are \*\*The Collective\*\*, the Discord bot of \[Atlantis HUD\]/);
     expect(text).toContain('`/latest-release`');
@@ -295,10 +302,12 @@ describe('formatInfo', () => {
   it('warns when the channel is not on the allowlist', () => {
     const text = formatInfo({
       ...base,
-      commands: ['ask', 'collective-info', 'wish', 'latest-release'],
+      commands: ['access-collective-hive-mind', 'collective-info', 'wish', 'latest-release'],
       channelAllowed: false,
     });
-    expect(text).toContain("outside the Collective's reach: `/ask`, `/wish` must be used");
+    expect(text).toContain(
+      "outside the Collective's reach: `/access-collective-hive-mind`, `/wish` must be used",
+    );
     expect(formatInfo(base)).not.toContain("outside the Collective's reach");
     expect(
       formatInfo({
@@ -325,7 +334,7 @@ describe('formatInfo for the admin', () => {
   it('marks unreleased commands', () => {
     const text = formatInfo({
       commands: ['collective-info'],
-      adminOnly: ['ask'],
+      adminOnly: ['access-collective-hive-mind'],
       tracking: false,
       channelAllowed: true,
       hudSiteUrl: 'https://hud.example.com',
@@ -337,7 +346,9 @@ describe('formatInfo for the admin', () => {
       defaultVariant: 'standard',
       queueLength: 0,
     });
-    expect(text).toMatch(/`\/ask question:<text>.*\*\(admin only, not released\)\*/);
+    expect(text).toMatch(
+      /`\/access-collective-hive-mind question:<text>.*\*\(admin only, not released\)\*/,
+    );
     expect(text).toContain('assimilated the rules');
     expect(text).not.toMatch(/`\/collective-info`.*admin only/);
   });

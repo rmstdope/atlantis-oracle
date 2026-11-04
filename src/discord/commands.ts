@@ -5,7 +5,7 @@ import {
 } from 'discord.js';
 import type { CommandName, DiscordConfig } from '../config.js';
 
-export const ASK: CommandName = 'ask';
+export const ASK: CommandName = 'access-collective-hive-mind';
 export const INFO: CommandName = 'collective-info';
 export const REPORT_BUG: CommandName = 'report-bug';
 export const WISH: CommandName = 'wish';

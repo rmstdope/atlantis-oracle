@@ -44,7 +44,7 @@ export interface TopicCheckOptions {
   signal?: AbortSignal;
   /**
    * Give up after this long and answer the question anyway. Keeps a check
-   * queued behind research on a single-slot server from outliving /ask's
+   * queued behind research on a single-slot server from outliving /access-collective-hive-mind's
    * 15-minute interaction. Default 60 s.
    */
   timeoutMs?: number;
